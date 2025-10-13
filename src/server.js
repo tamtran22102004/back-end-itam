@@ -9,12 +9,18 @@ const router = require("./router/index");
 
 const app = express();
 
+app.use(cors(corsConfig));
+app.options("*", cors(corsConfig));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors());
 
 // ✅ mount router tại /api (chỉ 1 lần)
 app.use("/api", router);
+
+app.get("/api/ping", (req, res) => {
+  res.send("pong");
+});
 
 app.use(errorHandler);
 
