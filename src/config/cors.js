@@ -1,3 +1,4 @@
+//cors
 const allowedOrigins = [
   "http://localhost:5173",
   "https://front-end-itam.vercel.app",
