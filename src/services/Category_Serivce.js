@@ -54,20 +54,77 @@ const deleteCategory = async (id) => {
   return result;
 };
 
-const createCategoryAttribute = async (
-  CategoryID,
-  AttributeID,
-  IsRequired,
-  DisplayOrder
-) => {
-  const [result] = await db.execute(
-    `INSERT INTO CategoryAttribute (CategoryID, AttributeID, IsRequired, DisplayOrder)
-    VALUES (?, ?, ?, ?)ON DUPLICATE KEY UPDATE
-       IsRequired = VALUES(IsRequired),
-       DisplayOrder = VALUES(DisplayOrder);`,
-    [CategoryID, AttributeID, IsRequired ? 1 : 0, DisplayOrder || 0]
+const getAttributesByCategory = async (categoryId) => {
+  const [rows] = await db.execute(
+    `SELECT 
+       a.ID AS AttributeID,
+       a.Name AS AttributeName,
+       a.MeasurementUnit,
+       COALESCE(ca.IsRequired, 0) AS IsRequired,
+       COALESCE(ca.DisplayOrder, 0) AS DisplayOrder
+     FROM Attribute a
+     LEFT JOIN CategoryAttribute ca
+       ON ca.AttributeID = a.ID AND ca.CategoryID = ?
+     ORDER BY 
+       CASE WHEN COALESCE(ca.DisplayOrder, 0) = 0 THEN 999999 ELSE ca.DisplayOrder END ASC, 
+       a.ID ASC`,
+    [categoryId]
   );
-  return [CategoryID, AttributeID, IsRequired, DisplayOrder];
+
+  return rows.map((r) => ({
+    AttributeID: r.AttributeID,
+    AttributeName: r.AttributeName,
+    MeasurementUnit: r.MeasurementUnit,
+    IsRequired: !!r.IsRequired,
+    DisplayOrder: Number(r.DisplayOrder) || 0,
+  }));
+};
+
+const saveCategoryAttributes = async (categoryId, mappings) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const picked = mappings.filter((m) => Number(m.IsRequired) === 1);
+
+    if (picked.length) {
+      const values = picked.map((m) => [
+        categoryId,
+        Number(m.AttributeID),
+        1,
+        Number(m.DisplayOrder) || 0,
+      ]);
+
+      await conn.query(
+        `INSERT INTO CategoryAttribute (CategoryID, AttributeID, IsRequired, DisplayOrder)
+         VALUES ?
+         ON DUPLICATE KEY UPDATE 
+           IsRequired = VALUES(IsRequired),
+           DisplayOrder = VALUES(DisplayOrder)`,
+        [values]
+      );
+
+      const ids = picked.map((m) => Number(m.AttributeID));
+      await conn.query(
+        `DELETE FROM CategoryAttribute 
+         WHERE CategoryID = ? AND AttributeID NOT IN (${ids
+           .map(() => "?")
+           .join(",")})`,
+        [categoryId, ...ids]
+      );
+    } else {
+      await conn.query(`DELETE FROM CategoryAttribute WHERE CategoryID = ?`, [
+        categoryId,
+      ]);
+    }
+
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
 };
 
 module.exports = {
@@ -75,5 +132,6 @@ module.exports = {
   getCategory,
   updateCategory,
   deleteCategory,
-  createCategoryAttribute,
+  getAttributesByCategory,
+  saveCategoryAttributes
 };

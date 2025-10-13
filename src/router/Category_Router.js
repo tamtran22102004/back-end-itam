@@ -15,6 +15,8 @@ router.post(
 router.get("/", Category_Controller.getCategory);
 router.post("/update/:id", Category_Controller.updateCategory);
 router.delete("/delete/:id", Category_Controller.deleteCategory);
-
 router.post("/attribute/add",Category_Controller.createCategoryAttribute)
+
+router.get("/:categoryId/attribute-config", Category_Controller.getAttributeConfig);
+router.post("/:categoryId/attribute-config", Category_Controller.saveAttributeConfig);
 module.exports = router;

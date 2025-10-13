@@ -25,10 +25,10 @@ const createAttribute = async (req, res, next) => {
     if (!name || !measurementUnit) {
       return next(new AppError("Missing required params", 400));
     }
-    const result = await AttributeService.creaeAttribute(name, measurementUnit);
+    const result = await AttributeService.createAttribute(name, measurementUnit);
     return successResponse(res, 200, result, "Create attribute successfully");
   } catch (error) {
-    next(
+    next(   
       error instanceof AppError
         ? error
         : new AppError(error.message || "Internal Server Error", 500)
@@ -64,7 +64,7 @@ const deleteAttribute = async (req, res, next) => {
         : new AppError(error.message || "Internal Server Error", 500)
     );
   }
-};
+  };
 module.exports = {
   getAttribute,
   createAttribute,

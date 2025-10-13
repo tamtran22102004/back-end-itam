@@ -94,10 +94,45 @@ const createCategoryAttribute = async (req, res, next) => {
   }
 };
 
+const getAttributeConfig = async (req, res, next) => {
+  try {
+    const { categoryId } = req.params;
+    const data = await CategoryService.getAttributesByCategory(
+      categoryId
+    );
+    return successResponse(
+      res,
+      200,
+      data,
+      "Get CategoryAttribute Successfully"
+    );
+  } catch (error) {
+    next(
+      error instanceof AppError
+        ? error
+        : new AppError(error.message || "Internal Server Error", 500)
+    );
+  }
+};
+
+const saveAttributeConfig = async (req, res, next) => {
+  try {
+    const { categoryId } = req.params;
+    const mappings = Array.isArray(req.body.mappings) ? req.body.mappings : [];
+
+    await CategoryService.saveCategoryAttributes(categoryId, mappings);
+    res.json({ success: true, message: "Đã lưu cấu hình thuộc tính." });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   CreateCategory,
   getCategory,
   updateCategory,
   deleteCategory,
   createCategoryAttribute,
+  getAttributeConfig,
+  saveAttributeConfig,
 };
