@@ -62,8 +62,8 @@ const getAttributesByCategory = async (categoryId) => {
        a.MeasurementUnit,
        COALESCE(ca.IsRequired, 0) AS IsRequired,
        COALESCE(ca.DisplayOrder, 0) AS DisplayOrder
-     FROM Attribute a
-     LEFT JOIN CategoryAttribute ca
+     FROM attribute a
+     LEFT JOIN categoryattribute ca
        ON ca.AttributeID = a.ID AND ca.CategoryID = ?
      ORDER BY 
        CASE WHEN COALESCE(ca.DisplayOrder, 0) = 0 THEN 999999 ELSE ca.DisplayOrder END ASC, 
@@ -133,5 +133,5 @@ module.exports = {
   updateCategory,
   deleteCategory,
   getAttributesByCategory,
-  saveCategoryAttributes
+  saveCategoryAttributes,
 };
