@@ -96,7 +96,7 @@ const saveCategoryAttributes = async (categoryId, mappings) => {
       ]);
 
       await conn.query(
-        `INSERT INTO CategoryAttribute (CategoryID, AttributeID, IsRequired, DisplayOrder)
+        `INSERT INTO categoryattribute (CategoryID, AttributeID, IsRequired, DisplayOrder)
          VALUES ?
          ON DUPLICATE KEY UPDATE 
            IsRequired = VALUES(IsRequired),
@@ -106,14 +106,14 @@ const saveCategoryAttributes = async (categoryId, mappings) => {
 
       const ids = picked.map((m) => Number(m.AttributeID));
       await conn.query(
-        `DELETE FROM CategoryAttribute 
+        `DELETE FROM categoryattribute 
          WHERE CategoryID = ? AND AttributeID NOT IN (${ids
            .map(() => "?")
            .join(",")})`,
         [categoryId, ...ids]
       );
     } else {
-      await conn.query(`DELETE FROM CategoryAttribute WHERE CategoryID = ?`, [
+      await conn.query(`DELETE FROM categoryattribute WHERE CategoryID = ?`, [
         categoryId,
       ]);
     }
