@@ -6,13 +6,7 @@ const authent = require("../middleware/authe");
 const { getCategory } = require("../services/Category_Serivce");
 const router = express.Router();
 
-router.post(
-  "/add",
-  categoryValidator.createCategory,
-  authent,
-  validate,
-  Category_Controller.CreateCategory
-);
+router.post("/add",  Category_Controller.CreateCategory);
 router.get("/", Category_Controller.getCategory);
 router.post("/update/:id", Category_Controller.updateCategory);
 router.delete("/delete/:id", Category_Controller.deleteCategory);
