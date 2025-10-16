@@ -126,6 +126,10 @@ const saveCategoryAttributes = async (categoryId, mappings) => {
     conn.release();
   }
 };
+const getManufacturer = async()=>{
+  const [result] = await db.execute("SELECT * from manufacturer ")
+  return result;
+}
 
 module.exports = {
   createCategory,
@@ -134,4 +138,5 @@ module.exports = {
   deleteCategory,
   getAttributesByCategory,
   saveCategoryAttributes,
+  getManufacturer
 };

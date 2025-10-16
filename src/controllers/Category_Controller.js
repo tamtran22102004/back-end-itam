@@ -127,6 +127,21 @@ const saveAttributeConfig = async (req, res, next) => {
   }
 };
 
+const getManufacturer = async (req,res,next)=>{
+  try{
+    const result = await CategoryService.getManufacturer()
+    return successResponse(res,200,result,"Get Manufacturer Successfully")
+  }
+  catch(error){
+    next(
+      error instanceof AppError
+        ? error
+        : new AppError(error.message || "Internal Server Error", 500)
+    );
+    
+  }
+}
+
 module.exports = {
   CreateCategory,
   getCategory,
@@ -135,4 +150,5 @@ module.exports = {
   createCategoryAttribute,
   getAttributeConfig,
   saveAttributeConfig,
+  getManufacturer
 };
