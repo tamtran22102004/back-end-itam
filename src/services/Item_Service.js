@@ -24,7 +24,7 @@ const createItemMaster = async (data) => {
 
     // 1️⃣ Insert ItemMaster
     await conn.execute(
-      `INSERT INTO ItemMaster (ID, CategoryID, ManufacturerID, Name, ManageType, Quantity)
+      `INSERT INTO itemmaster (ID, CategoryID, ManufacturerID, Name, ManageType, Quantity)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [ID, CategoryID, ManufacturerID || null, Name, ManageType, Quantity ?? 0]
     );
@@ -33,7 +33,7 @@ const createItemMaster = async (data) => {
     for (const attr of Attributes) {
       if (attr.AttributeID && attr.Value !== undefined && attr.Value !== null) {
         await conn.execute(
-          `INSERT INTO ItemMasterAttributeValue (AttributeID, ItemMasterID, Value)
+          `INSERT INTO itemmasterattributevalue (AttributeID, ItemMasterID, Value)
            VALUES (?, ?, ?)`,
           [attr.AttributeID, ID, attr.Value]
         );
@@ -77,19 +77,19 @@ const updateItemMaster = async (id, data) => {
 
     // 1️⃣ Cập nhật ItemMaster chính
     await conn.execute(
-      `UPDATE ItemMaster 
+      `UPDATE itemmaster 
        SET ManufacturerID = ?, CategoryID = ?, Name = ?, ManageType = ?, Quantity = ? 
        WHERE ID = ?`,
       [ManufacturerID, CategoryID, Name, ManageType, Quantity, id]
     );
 
     // 2️⃣ Xóa thuộc tính cũ (đảm bảo không bị trùng)
-    await conn.execute(`DELETE FROM ItemMasterAttributeValue WHERE ItemMasterID = ?`, [id]);
+    await conn.execute(`DELETE FROM itemmasterattributevalue WHERE ItemMasterID = ?`, [id]);
 
     // 3️⃣ Thêm lại thuộc tính mới (nếu có)
     for (const attr of Attributes) {
       await conn.execute(
-        `INSERT INTO ItemMasterAttributeValue (AttributeID, ItemMasterID, Value)
+        `INSERT INTO itemmasterattributevalue (AttributeID, ItemMasterID, Value)
          VALUES (?, ?, ?)`,
         [attr.AttributeID, id, attr.Value || ""]
       );
@@ -115,7 +115,7 @@ const deleteItemMaster = async (id) => {
 };
 
 const getAssetService = async () => {
-  const [result] = await db.execute("Select * from Asset");
+  const [result] = await db.execute("Select * from asset");
   return result;
 };
 
@@ -149,7 +149,7 @@ const createAssetService = async (data) => {
 
     // 1️⃣ Thêm mới Asset
     await conn.execute(
-      `INSERT INTO Asset 
+      `INSERT INTO asset 
         (ID, ManageCode, AssetCode, Name, CategoryID, ItemMasterID, VendorID, 
          PurchaseDate, PurchasePrice, PurchaseId, WarrantyStartDate, WarrantyEndDate, 
          WarrantyMonth, SerialNumber, EmployeeID, SectionID, Quantity, QRCode, Status)
@@ -179,15 +179,15 @@ const createAssetService = async (data) => {
 
     // 2️⃣ Copy cấu hình từ ItemMaster → AssetAttributeValue
     await conn.execute(
-      `INSERT INTO AssetAttributeValue (AttributeID, AssetID, Value)
-       SELECT AttributeID, ?, Value FROM ItemMasterAttributeValue WHERE ItemMasterID = ?`,
+      `INSERT INTO assetattributevalue (AttributeID, AssetID, Value)
+       SELECT AttributeID, ?, Value FROM itemmasterattributevalue WHERE ItemMasterID = ?`,
       [assetId, ItemMasterID]
     );
 
     // 3️⃣ Tạo log lịch sử nhập kho
     const historyId = uuidv4();
     await conn.execute(
-      `INSERT INTO AssetHistory (ID, AssetID, Quantity, Type, ActionAt, Note)
+      `INSERT INTO assethistory (ID, AssetID, Quantity, Type, ActionAt, Note)
        VALUES (?, ?, ?, 'AVAILABLE', NOW(), ?)`,
       [historyId, assetId, Quantity, "Nhập kho tự động khi tạo thiết bị"]
     );
@@ -195,7 +195,7 @@ const createAssetService = async (data) => {
     // 4️⃣ Cập nhật số lượng ItemMaster
     if (ItemMasterID) {
       await conn.execute(
-        "UPDATE ItemMaster SET Quantity = Quantity + ? WHERE ID = ?",
+        "UPDATE itemmaster SET Quantity = Quantity + ? WHERE ID = ?",
         [Quantity, ItemMasterID]
       );
     }
@@ -261,7 +261,7 @@ const updateAssetService = async (id, data) => {
 
     // 1️⃣ Lấy Asset cũ
     const [rows] = await conn.execute(
-      "SELECT Quantity, ItemMasterID FROM Asset WHERE ID = ?",
+      "SELECT Quantity, ItemMasterID FROM asset WHERE ID = ?",
       [id]
     );
     if (rows.length === 0) throw new AppError("Asset không tồn tại", 404);
@@ -301,7 +301,7 @@ const updateAssetService = async (id, data) => {
     const diff = Quantity - oldAsset.Quantity;
     if (diff !== 0 && ItemMasterID) {
       await conn.execute(
-        "UPDATE ItemMaster SET Quantity = Quantity + ? WHERE ID = ?",
+        "UPDATE itemmaster SET Quantity = Quantity + ? WHERE ID = ?",
         [diff, ItemMasterID]
       );
     }
@@ -342,16 +342,16 @@ const deleteAssetService = async (id) => {
     await conn.beginTransaction();
 
     const [rows] = await conn.execute(
-      "SELECT Quantity, ItemMasterID FROM Asset WHERE ID = ?",
+      "SELECT Quantity, ItemMasterID FROM asset WHERE ID = ?",
       [id]
     );
     if (rows.length === 0) throw new AppError("Asset không tồn tại", 404);
     const asset = rows[0];
 
-    await conn.execute("DELETE FROM Asset WHERE ID = ?", [id]);
+    await conn.execute("DELETE FROM asset WHERE ID = ?", [id]);
     if (asset.ItemMasterID) {
       await conn.execute(
-        "UPDATE ItemMaster SET Quantity = Quantity - ? WHERE ID = ?",
+        "UPDATE itemmaster SET Quantity = Quantity - ? WHERE ID = ?",
         [asset.Quantity, asset.ItemMasterID]
       );
     }
@@ -374,8 +374,8 @@ const getItemMasterAttributeService= async(id)=>{
          imav.Value,
          a.Name AS AttributeName,
          a.MeasurementUnit
-       FROM ItemMasterAttributeValue imav
-       JOIN Attribute a ON a.ID = imav.AttributeID
+       FROM itemmasterattributevalue imav
+       JOIN attribute a ON a.ID = imav.AttributeID
        WHERE imav.ItemMasterID = ?`,
       [itemId]
     );
