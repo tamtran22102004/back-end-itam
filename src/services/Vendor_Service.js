@@ -9,7 +9,7 @@ const findVendorName = async (name) => {
 };
 
 const getVendorService = async () => {
-  const [result] = await db.execute("SELECT * FROM Vendor");
+  const [result] = await db.execute("SELECT * FROM vendor");
   return result;
 };
 const createVendorService = async (Name) => {
@@ -18,7 +18,10 @@ const createVendorService = async (Name) => {
   if (existingName) {
     throw new AppError("Tên nhà cung cấp đã được tạo", 404);
   }
-  const [result]=await db.execute("INSERT INTO Vendor (ID,Name) VALUES (?,?)",[id,Name])
-  return [id,Name];
+  const [result] = await db.execute(
+    "INSERT INTO vendor (ID,Name) VALUES (?,?)",
+    [id, Name]
+  );
+  return [id, Name];
 };
-module.exports = { getVendorService, createVendorService};
+module.exports = { getVendorService, createVendorService };
