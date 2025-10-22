@@ -55,49 +55,7 @@ const deleteItemMaster = async (req, res, next) => {
   }
 };
 
-const createAsset = async (req, res, next) => {
-  try {
-    const result = await ItemService.createAssetService(req.body);
-    return successResponse(res, 200, result, "Create Asset Successfully");
-  } catch (error) {
-    next(
-      error instanceof AppError
-        ? error
-        : new AppError(error.message || "Internal Server Error", 500)
-    );
-  }
-};
 
-const getAsset = async (req, res, next) => {
-  try {
-    const result = await ItemService.getAssetService();
-    return successResponse(res, 200, result, "Get Asset Successfully");
-  } catch (error) {
-    next(
-      error instanceof AppError
-        ? error
-        : new AppError(error.message || "Internal Server Error", 500)
-    );
-  }
-};
-const updateAsset = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const result = await ItemService.updateAssetService(id, req.body);
-    return successResponse(res, 200, result, "Cập nhật Asset thành công");
-  } catch (error) {
-    next(error instanceof AppError ? error : new AppError(error.message, 500));
-  }
-};
-const deleteAsset = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const result = await ItemService.deleteAssetService(id);
-    return successResponse(res, 200, result, "Xóa Asset thành công");
-  } catch (error) {
-    next(error instanceof AppError ? error : new AppError(error.message, 500));
-  }
-};
 const getItemMasterAttribute =async(req,res,next)=>{
   try {
     const itemId = req.params.id;
@@ -110,16 +68,26 @@ const getItemMasterAttribute =async(req,res,next)=>{
       :new AppError(error.message || "Không thể tải thuộc tính", 500));
   }
 };
+const checkItemQuantity = async(req,res,next)=>{
+  try {
+    const itemmasterid = req.params.id;
+    const result = await ItemService.checkItemQuantity(itemmasterid)
+    return successResponse(res,200,result,"Get ItemMasterAttribute Successfully")
+  } catch (error) {
+    next(
+      error instanceof AppError
+      ?error
+      :new AppError(error.message || "Không thể tải thuộc tính", 500));
+  }
+
+}
 
 
 module.exports = {
+  checkItemQuantity,
   createItemMaster,
   getItemMaster,
   updateItemMaster,
   deleteItemMaster,
-  createAsset,
-  getAsset,
-  updateAsset,
-  deleteAsset,
   getItemMasterAttribute
 };

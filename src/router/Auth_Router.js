@@ -13,4 +13,7 @@ router.post(
 
 router.post("/login", authValidator.login, validate, Auth_Controller.LoginUser);
 
+
+router.get("/getuserinfo", Auth_Controller.getUserInfo);
+router.get("/getdepartment", Auth_Controller.getDepartment);
 module.exports = router; //export default

@@ -9,20 +9,7 @@ router.post("/add", Item_Controller.createItemMaster);
 router.post("/update/:id", Item_Controller.updateItemMaster);
 router.post("/delete/:id", Item_Controller.deleteItemMaster);
 
-router.get("/asset", Item_Controller.getAsset);
-router.post(
-  "/asset/add",
-  AssetValidator.createAssetValidator,
-  validate,
-  Item_Controller.createAsset
-);
-router.post(
-  "/asset/update/:id",
-  AssetValidator.updateAssetValidator,
-  validate,
-  Item_Controller.updateAsset
-);
-router.post("/asset/delete/:id", Item_Controller.deleteAsset);
 
+router.get("/check-itemquantity/:id",Item_Controller.checkItemQuantity)
 router.get("/:id/attribute",Item_Controller.getItemMasterAttribute)
 module.exports = router;

@@ -47,8 +47,34 @@ const LoginUser = wrap(async (req, res, next) => {
     );
   }
 });
+const getUserInfo = async (req, res, next) => {
+  try {
+    const result = await Auth_Service.getUserInfo();
+    return successResponse(res, 200, result, "Get User Info successfully");
+  } catch (error) {
+    next(
+      error instanceof AppError
+        ? error
+        : new AppError(error.message || "Internal Server Error", 500)
+    );
+  }
+}
+const getDepartment = async (req, res, next) => {
+  try {
+    const result = await Auth_Service.getDepartment();
+    return successResponse(res, 200, result, "Get Department successfully");
+  } catch (error) {
+    next(
+      error instanceof AppError
+        ? error
+        : new AppError(error.message || "Internal Server Error", 500)
+    );
+  }
+}
 
 module.exports = {
   RegisterUser,
   LoginUser,
+  getUserInfo,
+  getDepartment
 };

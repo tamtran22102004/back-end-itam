@@ -62,9 +62,19 @@ async function login({ email, password }) {
     },
   };
 }
+const getUserInfo = async () => {
+  const [rows] = await db.execute("SELECT UserID, FullName FROM user");
+  return rows;
+};
+const getDepartment = async () => {
+  const [rows] = await db.execute("SELECT * FROM department");
+  return rows;
+};
 
 module.exports = {
   findUserByEmail,
   register,
   login,
+  getUserInfo,
+  getDepartment
 };
