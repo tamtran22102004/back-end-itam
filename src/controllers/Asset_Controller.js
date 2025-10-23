@@ -3,6 +3,7 @@ const AppError = require("../utils/AppError");
 const { validationResult } = require("express-validator");
 const { successResponse } = require("../utils/formatResponse");
 const { get } = require("mongoose");
+
 const createAsset = async (req, res, next) => {
   try {
     const result = await Asset_Service.createAssetService(req.body);
@@ -118,15 +119,26 @@ const getAssetDetail = async (req, res, next) => {
     const { id } = req.params;
     const result = await Asset_Service.getAssetDetail(id);
     return successResponse(res, 200, result, "Get Asset Detail Successfully");
-  }
-  catch (error) {
+  } catch (error) {
     next(
       error instanceof AppError
         ? error
         : new AppError(error.message || "Internal Server Error", 500)
     );
   }
-}
+};
+const getAssetHistory = async (req, res, next) => {
+  try {
+    const result = await Asset_Service.getAssetHistory();
+    return successResponse(res, 200, result, "Get Asset History Successfully");
+  } catch (error) {
+    next(
+      error instanceof AppError
+        ? error
+        : new AppError(error.message || "Internal Server Error", 500)
+    );
+  }
+};
 module.exports = {
   createAsset,
   getAsset,
@@ -137,4 +149,5 @@ module.exports = {
   updateAssetConfig,
   deleteAssetConfig,
   getAssetDetail,
+  getAssetHistory,
 };

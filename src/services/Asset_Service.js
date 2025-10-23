@@ -19,6 +19,39 @@ const toPositiveIntOr = (v, fallback = 1) => {
   const n = Number(v);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
 };
+const getAssetHistory = async () => {
+  const [rows] = await db.execute(`
+      SELECT 
+    ah.ID AS HistoryID,
+    ah.AssetID,
+    a.Name AS AssetName,
+    ah.RequestID,
+    rt.Name AS RequestTypeName,
+    ah.EmployeeID,
+    u_from.FullName AS FromEmployeeName,
+    ah.SectionID,
+    d_from.DepartmentName AS FromDepartmentName,
+    ah.EmployeeReceiveID,
+    u_to.FullName AS ToEmployeeName,
+    ah.SectionReceiveID,
+    d_to.DepartmentName AS ToDepartmentName,
+    ah.Quantity,
+    ah.Type,
+    ah.ActionAt,
+    ah.Note
+FROM assethistory ah
+LEFT JOIN asset a ON a.ID = ah.AssetID
+LEFT JOIN request r ON r.RequestID = ah.RequestID
+LEFT JOIN requesttype rt ON rt.RequestTypeID = r.RequestTypeID
+LEFT JOIN user u_from ON u_from.UserID = ah.EmployeeID
+LEFT JOIN user u_to ON u_to.UserID = ah.EmployeeReceiveID
+LEFT JOIN department d_from ON d_from.DepartmentID = ah.SectionID
+LEFT JOIN department d_to ON d_to.DepartmentID = ah.SectionReceiveID
+ORDER BY ah.ActionAt DESC;
+
+    `);
+  return rows;
+};
 
 const getAssetService = async () => {
   const [result] = await db.execute("Select * from asset");
@@ -532,4 +565,5 @@ module.exports = {
   updateAssetConfig,
   deleteAssetConfig,
   getAssetDetail,
+  getAssetHistory
 };

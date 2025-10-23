@@ -26,4 +26,6 @@ router.post("/assetconfig/delete/:id",Asset_Controller.deleteAssetConfig)
 
 
 router.get("/assetdetail/:id",Asset_Controller.getAssetDetail)
+
+router.get("/assethistory",Asset_Controller.getAssetHistory)
 module.exports = router
