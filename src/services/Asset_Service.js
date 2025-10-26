@@ -379,7 +379,7 @@ const getAssetConfig = async () => {
             ELSE v.Value
           END AS Value
         FROM asset a
-        LEFT JOIN CategoryAttribute ca ON ca.CategoryID = a.CategoryID
+        LEFT JOIN categoryattribute ca ON ca.CategoryID = a.CategoryID
         LEFT JOIN attribute attr       ON attr.ID = ca.AttributeID
         LEFT JOIN assetattributevalue v 
               ON v.AssetID = a.ID AND v.AttributeID = attr.ID
@@ -565,5 +565,5 @@ module.exports = {
   updateAssetConfig,
   deleteAssetConfig,
   getAssetDetail,
-  getAssetHistory
+  getAssetHistory,
 };

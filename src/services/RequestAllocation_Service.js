@@ -50,7 +50,7 @@ const approveRequestAllocation = async (id, data) => {
     );
     if (!reqRow) throw new Error("REQUEST_NOT_FOUND");
     if (["APPROVED", "REJECTED", "CANCELLED"].includes(reqRow.CurrentState)) {
-      throw new AppError(`REQUEST_FINAL_${reqRow.CurrentState}`,409);
+      throw new AppError(`REQUEST_FINAL_${reqRow.CurrentState}`, 409);
     }
 
     // 1) Log hành động hiện tại
@@ -190,18 +190,25 @@ const getRequestAllocationDetail = async (id) => {
 const getAllRequestAllocationDetail = async () => {
   const [rows] = await db.execute(
     `SELECT
-         r.RequestID,
-         r.RequesterUserID,
-         r.CurrentState,
-         r.CreatedAt,
-         r.UpdatedAt,
-         r.Note,
-         COALESCE(SUM(ra.Quantity), 0) AS TotalQuantity
-       FROM \`Request\` r
-       LEFT JOIN \`Request_Allocation\` ra ON ra.RequestID = r.RequestID
-       WHERE r.RequestTypeID = 1
-       GROUP BY r.RequestID, r.RequesterUserID, r.CurrentState, r.CreatedAt, r.UpdatedAt, r.Note
-       ORDER BY r.CreatedAt DESC`
+  r.RequestID,
+  r.RequesterUserID,
+  r.CurrentState,
+  r.CreatedAt,
+  r.UpdatedAt,
+  r.Note,
+  COALESCE(SUM(ra.Quantity), 0) AS TotalQuantity
+FROM request r
+LEFT JOIN request_allocation ra ON ra.RequestID = r.RequestID
+WHERE r.RequestTypeID = 1
+GROUP BY 
+  r.RequestID, 
+  r.RequesterUserID, 
+  r.CurrentState, 
+  r.CreatedAt, 
+  r.UpdatedAt, 
+  r.Note
+ORDER BY r.CreatedAt DESC;
+`
   );
   return { requests: rows };
 };

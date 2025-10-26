@@ -103,7 +103,11 @@ const approveRequestMaintenance = async (id, data) => {
       const st = Number(asset.Status);
       // Không cho đi bảo trì nếu đã disposed / đã maintenance_out / đang gửi bảo hành
       if (
-        [ASSET_STATUS.DISPOSED, ASSET_STATUS.MAINTENANCE_OUT, ASSET_STATUS.WARRANTY_OUT].includes(st)
+        [
+          ASSET_STATUS.DISPOSED,
+          ASSET_STATUS.MAINTENANCE_OUT,
+          ASSET_STATUS.WARRANTY_OUT,
+        ].includes(st)
       ) {
         throw new AppError("ASSET_NOT_ELIGIBLE_FOR_MAINTENANCE", 409);
       }
@@ -122,7 +126,7 @@ const approveRequestMaintenance = async (id, data) => {
           assetHistoryId,
           AssetID,
           id,
-          RequesterUserID,          // ai yêu cầu (để truy vết)
+          RequesterUserID, // ai yêu cầu (để truy vết)
           UserDept ?? DepartmentID, // phòng ban của người yêu cầu
           Quantity ?? 1,
           note,
@@ -184,17 +188,24 @@ const getRequestMaintenanceDetail = async (id) => {
 const getAllRequestMaintenanceDetail = async () => {
   const [rows] = await db.execute(
     `SELECT
-       r.RequestID,
-       r.RequesterUserID,
-       r.CurrentState,
-       r.CreatedAt,
-       r.UpdatedAt,
-       r.Note,
-       COALESCE(SUM(rm.Quantity), 0) AS TotalQuantity
-     FROM \`Request\` r
-     JOIN \`Request_Maintenance\` rm ON rm.RequestID = r.RequestID
-     GROUP BY r.RequestID, r.RequesterUserID, r.CurrentState, r.CreatedAt, r.UpdatedAt, r.Note
-     ORDER BY r.CreatedAt DESC`
+  r.RequestID,
+  r.RequesterUserID,
+  r.CurrentState,
+  r.CreatedAt,
+  r.UpdatedAt,
+  r.Note,
+  COALESCE(SUM(rm.Quantity), 0) AS TotalQuantity
+FROM Request r
+JOIN Request_Maintenance rm ON rm.RequestID = r.RequestID
+GROUP BY 
+  r.RequestID, 
+  r.RequesterUserID, 
+  r.CurrentState, 
+  r.CreatedAt, 
+  r.UpdatedAt, 
+  r.Note
+ORDER BY r.CreatedAt DESC;
+`
   );
   return { requests: rows };
 };
