@@ -6,21 +6,21 @@ const createRequestAllocation = async (data) => {
   const { RequesterUserID, AssetID, Quantity, Note } = data;
 
   const [requestResult] = await db.execute(
-    `INSERT INTO Request (RequestTypeID, RequesterUserID, CurrentState, CreatedAt, UpdatedAt, Note)
+    `INSERT INTO request (RequestTypeID, RequesterUserID, CurrentState, CreatedAt, UpdatedAt, Note)
        VALUES (1, ?, 'PENDING', NOW(), NOW(), ?)`,
     [RequesterUserID, Note]
   );
   const RequestID = requestResult.insertId;
   // 2. Ghi chi tiết cấp phát
   await db.execute(
-    `INSERT INTO Request_Allocation (RequestID, AssetID, Quantity)
+    `INSERT INTO request_allocation (RequestID, AssetID, Quantity)
        VALUES (?, ?, ?)`,
     [RequestID, AssetID, Quantity]
   );
 
   // 3. Ghi nhật ký tạo yêu cầu
   await db.execute(
-    `INSERT INTO ApprovalHistory (RequestID, ApproverUserID, DepartmentID, Action, ActionAt, Comment)
+    `INSERT INTO approvalhistory (RequestID, ApproverUserID, DepartmentID, Action, ActionAt, Comment)
        VALUES (?, ?, 1, 'CREATED', NOW(), 'Người dùng tạo yêu cầu')`,
     [RequestID, RequesterUserID]
   );
@@ -45,7 +45,7 @@ const approveRequestAllocation = async (id, data) => {
 
     // 0) Kiểm tra request còn hiệu lực
     const [[reqRow]] = await conn.execute(
-      "SELECT CurrentState FROM `Request` WHERE RequestID = ? FOR UPDATE",
+      "SELECT CurrentState FROM `request` WHERE RequestID = ? FOR UPDATE",
       [id]
     );
     if (!reqRow) throw new Error("REQUEST_NOT_FOUND");
@@ -55,7 +55,7 @@ const approveRequestAllocation = async (id, data) => {
 
     // 1) Log hành động hiện tại
     await conn.execute(
-      `INSERT INTO \`ApprovalHistory\`
+      `INSERT INTO approvalhistory
         (RequestID, StepID, ApproverUserID, DepartmentID, Action, ActionAt, Comment)
        VALUES (?, ?, ?, ?, ?, NOW(), ?)`,
       [
@@ -71,7 +71,7 @@ const approveRequestAllocation = async (id, data) => {
     // ============ REJECTED ============
     if (Action === "REJECTED") {
       await conn.execute(
-        `UPDATE \`Request\` SET CurrentState='REJECTED', UpdatedAt=NOW() WHERE RequestID=?`,
+        `UPDATE request SET CurrentState='REJECTED', UpdatedAt=NOW() WHERE RequestID=?`,
         [id]
       );
       await conn.commit();
@@ -82,7 +82,7 @@ const approveRequestAllocation = async (id, data) => {
     // Bước 1 -> chuyển bước 2
     if (Action === "APPROVED" && StepID === 1) {
       await conn.execute(
-        `UPDATE \`Request\` SET CurrentState='IN_PROGRESS_STEP_2', UpdatedAt=NOW() WHERE RequestID=?`,
+        `UPDATE request SET CurrentState='IN_PROGRESS_STEP_2', UpdatedAt=NOW() WHERE RequestID=?`,
         [id]
       );
       await conn.commit();
@@ -98,9 +98,9 @@ const approveRequestAllocation = async (id, data) => {
             ra.Quantity,
             r.RequesterUserID,
             u.DepartmentID AS UserDept
-         FROM \`Request_Allocation\` ra
-         JOIN \`Request\` r ON r.RequestID = ra.RequestID
-         JOIN \`user\` u ON u.UserID = r.RequesterUserID
+         FROM request_allocation ra
+         JOIN request r ON r.RequestID = ra.RequestID
+         JOIN user u ON u.UserID = r.RequesterUserID
          WHERE ra.RequestID = ?
          FOR UPDATE`,
         [id]
@@ -125,7 +125,7 @@ const approveRequestAllocation = async (id, data) => {
       // Ghi assethistory
       const assetHistoryId = uuidv4();
       const [ins] = await conn.execute(
-        `INSERT INTO \`assethistory\`
+        `INSERT INTO assethistory
           (ID, AssetID, RequestID, EmployeeID, SectionID, Quantity, Type, ActionAt, Note)
          VALUES (?, ?, ?, ?, ?, ?, 'ALLOCATED', NOW(), ?)`,
         [
@@ -148,13 +148,13 @@ const approveRequestAllocation = async (id, data) => {
 
       // Cập nhật Request
       await conn.execute(
-        `UPDATE \`Request\` SET CurrentState='APPROVED', UpdatedAt=NOW() WHERE RequestID=?`,
+        `UPDATE request SET CurrentState='APPROVED', UpdatedAt=NOW() WHERE RequestID=?`,
         [id]
       );
 
       // Log CONFIRMED
       await conn.execute(
-        `INSERT INTO \`ApprovalHistory\`
+        `INSERT INTO approvalhistory
           (RequestID, ApproverUserID, DepartmentID, Action, ActionAt, Comment)
          VALUES (?, ?, ?, 'CONFIRMED', NOW(), 'Đã cấp phát xong')`,
         [id, ApproverUserID, DepartmentID]

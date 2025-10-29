@@ -28,7 +28,7 @@ const approveRequestMaintenance = async (id, data) => {
 
     // 0) Kiểm tra request còn hiệu lực
     const [[reqRow]] = await conn.execute(
-      "SELECT CurrentState FROM `Request` WHERE RequestID = ? FOR UPDATE",
+      "SELECT CurrentState FROM `request` WHERE RequestID = ? FOR UPDATE",
       [id]
     );
     if (!reqRow) throw new AppError("REQUEST_NOT_FOUND", 404);
@@ -38,7 +38,7 @@ const approveRequestMaintenance = async (id, data) => {
 
     // 1) Log hành động hiện tại
     await conn.execute(
-      `INSERT INTO \`ApprovalHistory\`
+      `INSERT INTO approvalhistory
         (RequestID, StepID, ApproverUserID, DepartmentID, Action, ActionAt, Comment)
        VALUES (?, ?, ?, ?, ?, NOW(), ?)`,
       [
@@ -54,7 +54,7 @@ const approveRequestMaintenance = async (id, data) => {
     // === REJECTED ===
     if (Action === "REJECTED") {
       await conn.execute(
-        `UPDATE \`Request\` SET CurrentState='REJECTED', UpdatedAt=NOW() WHERE RequestID=?`,
+        `UPDATE request SET CurrentState='REJECTED', UpdatedAt=NOW() WHERE RequestID=?`,
         [id]
       );
       await conn.commit();
@@ -64,7 +64,7 @@ const approveRequestMaintenance = async (id, data) => {
     // === APPROVED — Step 1: sang bước 2 ===
     if (Action === "APPROVED" && StepID === 1) {
       await conn.execute(
-        `UPDATE \`Request\` SET CurrentState='IN_PROGRESS_STEP_2', UpdatedAt=NOW() WHERE RequestID=?`,
+        `UPDATE request SET CurrentState='IN_PROGRESS_STEP_2', UpdatedAt=NOW() WHERE RequestID=?`,
         [id]
       );
       await conn.commit();
@@ -81,9 +81,9 @@ const approveRequestMaintenance = async (id, data) => {
             rm.IssueDescription,
             r.RequesterUserID,
             u.DepartmentID AS UserDept
-         FROM \`Request_Maintenance\` rm
-         JOIN \`Request\` r ON r.RequestID = rm.RequestID
-         JOIN \`user\` u ON u.UserID = r.RequesterUserID
+         FROM request_maintenance rm
+         JOIN request r ON r.RequestID = rm.RequestID
+         JOIN user u ON u.UserID = r.RequesterUserID
          WHERE rm.RequestID = ?
          FOR UPDATE`,
         [id]
@@ -119,7 +119,7 @@ const approveRequestMaintenance = async (id, data) => {
         : "Đưa đi bảo trì";
 
       const [ins] = await conn.execute(
-        `INSERT INTO \`assethistory\`
+        `INSERT INTO assethistory
           (ID, AssetID, RequestID, EmployeeID, SectionID, Quantity, Type, ActionAt, Note)
          VALUES (?, ?, ?, ?, ?, ?, 'MAINTENANCE_OUT', NOW(), ?)`,
         [
@@ -144,13 +144,13 @@ const approveRequestMaintenance = async (id, data) => {
 
       // Cập nhật Request: APPROVED
       await conn.execute(
-        `UPDATE \`Request\` SET CurrentState='APPROVED', UpdatedAt=NOW() WHERE RequestID=?`,
+        `UPDATE request SET CurrentState='APPROVED', UpdatedAt=NOW() WHERE RequestID=?`,
         [id]
       );
 
       // Log CONFIRMED
       await conn.execute(
-        `INSERT INTO \`ApprovalHistory\`
+        `INSERT INTO approvalhistory
           (RequestID, ApproverUserID, DepartmentID, Action, ActionAt, Comment)
          VALUES (?, ?, ?, 'CONFIRMED', NOW(), 'Đã đưa đi bảo trì')`,
         [id, ApproverUserID, DepartmentID]
@@ -170,15 +170,15 @@ const approveRequestMaintenance = async (id, data) => {
 // Detail 1 request maintenance
 const getRequestMaintenanceDetail = async (id) => {
   const [[request]] = await db.execute(
-    "SELECT * FROM `Request` WHERE RequestID=?",
+    "SELECT * FROM `request` WHERE RequestID=?",
     [id]
   );
   const [maint] = await db.execute(
-    "SELECT * FROM `Request_Maintenance` WHERE RequestID=?",
+    "SELECT * FROM `request_maintenance` WHERE RequestID=?",
     [id]
   );
   const [history] = await db.execute(
-    "SELECT * FROM `ApprovalHistory` WHERE RequestID=? ORDER BY ActionAt ASC",
+    "SELECT * FROM `approvalhistory` WHERE RequestID=? ORDER BY ActionAt ASC",
     [id]
   );
   return { request, maintenance: maint, approvalHistory: history };
@@ -195,8 +195,8 @@ const getAllRequestMaintenanceDetail = async () => {
   r.UpdatedAt,
   r.Note,
   COALESCE(SUM(rm.Quantity), 0) AS TotalQuantity
-FROM Request r
-JOIN Request_Maintenance rm ON rm.RequestID = r.RequestID
+FROM request r
+JOIN request_maintenance rm ON rm.RequestID = r.RequestID
 GROUP BY 
   r.RequestID, 
   r.RequesterUserID, 

@@ -2,7 +2,7 @@ const db = require("../config/database");
 const { v4: uuidv4 } = require("uuid");
 
 const findVendorName = async (name) => {
-  const [rows] = await db.execute("SELECT * FROM Vendor WHERE Name = ?", [
+  const [rows] = await db.execute("SELECT * FROM vendor WHERE Name = ?", [
     name,
   ]);
   return rows.length > 0 ? rows[0] : null;
