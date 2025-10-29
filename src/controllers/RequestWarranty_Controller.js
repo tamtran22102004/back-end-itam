@@ -1,16 +1,16 @@
 const AppError = require("../utils/AppError");
 const { validationResult } = require("express-validator");
 const { successResponse } = require("../utils/formatResponse");
-const RequestAllocation_Service = require("../services/RequestAllocation_Service");
+const RequestWarranty_Service = require("../services/RequestWarranty_Service");
 
-const ApproveRequestAllocation = async (req, res, next) => {
+const approveRequestWarranty = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const result = await RequestAllocation_Service.approveRequestAllocation(
+    const result = await RequestWarranty_Service.approveRequestWarranty(
       id,
       req.body
     );
-    return successResponse(res, 200, result, "Approve Request Successfully");
+    successResponse(res, 200, result, "Approve Request Successfully");
   } catch (error) {
     next(
       error instanceof AppError
@@ -19,30 +19,16 @@ const ApproveRequestAllocation = async (req, res, next) => {
     );
   }
 };
-const getRequestAllocationDetail = async (req, res, next) => {
+
+const getRequestWarrantyDetail = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const result = await RequestAllocation_Service.getRequestAllocationDetail(
-      id
-    );
-    return successResponse(res, 200, result, "Get Request Detail Successfully");
-  } catch (error) {
-    next(
-      error instanceof AppError
-        ? error
-        : new AppError(error.message || "Internal Server Error", 500)
-    );
-  }
-};
-const getAllRequestAllocations = async (req, res, next) => {
-  try {
-    const result =
-      await RequestAllocation_Service.getAllRequestAllocationDetail();
-    return successResponse(
+    const result = await RequestWarranty_Service.getRequestWarrantyDetail(id);
+    successResponse(
       res,
       200,
       result,
-      "Get All Request Allocations Successfully"
+      "Get Request Warranty Detail Successfully"
     );
   } catch (error) {
     next(
@@ -52,8 +38,27 @@ const getAllRequestAllocations = async (req, res, next) => {
     );
   }
 };
+
+const getAllRequestWarrantyDetail = async (req, res, next) => {
+  try {
+    const result = await RequestWarranty_Service.getAllRequestWarrantyDetail();
+    successResponse(
+      res,
+      200,
+      result,
+      "Get All Request Warranty Detail Successfully"
+    );
+  } catch (error) {
+    next(
+      error instanceof AppError
+        ? error
+        : new AppError(error.message || "Internal Server Error", 500)
+    );
+  }
+};
+
 module.exports = {
-  ApproveRequestAllocation,
-  getRequestAllocationDetail,
-  getAllRequestAllocations,
+  approveRequestWarranty,
+  getRequestWarrantyDetail,
+  getAllRequestWarrantyDetail,
 };

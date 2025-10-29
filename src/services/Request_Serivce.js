@@ -10,14 +10,7 @@ const ASSET_STATUS = {
   DISPOSED: 5,
 };
 
-const OPEN_STATES = ["PENDING", "APPROVING", "APPROVED", "IN_PROGRESS"];
-
-const detailTableByCode = {
-  ALLOCATION: "Request_Allocation",
-  MAINTENANCE: "Request_Maintenance",
-  WARRANTY: "Request_Warranty",
-  DISPOSAL: "Request_Disposal",
-};
+const OPEN_STATES = ["PENDING", "IN_PROGRESS_STEP_1", "IN_PROGRESS_STEP_2"]; // các trạng thái “đang mở”
 
 // --- Helpers ---
 const resolveRequestTypeId = async (conn, typeInput) => {
@@ -25,7 +18,7 @@ const resolveRequestTypeId = async (conn, typeInput) => {
   const code = String(typeInput || "").trim().toUpperCase();
   if (!code) throw new AppError("REQUEST_TYPE_REQUIRED", 400);
   const [[row]] = await conn.execute(
-    "SELECT RequestTypeID, Code FROM `RequestType` WHERE UPPER(Code) = ?",
+    "SELECT RequestTypeID, Code FROM `requesttype` WHERE UPPER(Code) = ?",
     [code]
   );
   if (!row) throw new AppError("REQUEST_TYPE_NOT_FOUND", 400);
@@ -55,38 +48,43 @@ const requesterExists = async (conn, requesterId) => {
 };
 
 const hasOpenRequest = async (conn, assetId, excludeRequestId = null) => {
-  // Kiểm tra bất kỳ request mở nào trên Asset (mọi loại)
-  const [rows] = await conn.execute(
-    `SELECT r.RequestID
-     FROM Request r
-     JOIN Request_Allocation ra ON ra.RequestID = r.RequestID AND ra.AssetID = ?
-     WHERE r.CurrentState IN (${OPEN_STATES.map(()=>"?").join(",")})
-     ${excludeRequestId ? "AND r.RequestID <> ?" : ""}
-     UNION
-     SELECT r.RequestID
-     FROM Request r
-     JOIN Request_Maintenance rm ON rm.RequestID = r.RequestID AND rm.AssetID = ?
-     WHERE r.CurrentState IN (${OPEN_STATES.map(()=>"?").join(",")})
-     ${excludeRequestId ? "AND r.RequestID <> ?" : ""}
-     UNION
-     SELECT r.RequestID
-     FROM Request r
-     JOIN Request_Warranty rw ON rw.RequestID = r.RequestID AND rw.AssetID = ?
-     WHERE r.CurrentState IN (${OPEN_STATES.map(()=>"?").join(",")})
-     ${excludeRequestId ? "AND r.RequestID <> ?" : ""}
-     UNION
-     SELECT r.RequestID
-     FROM Request r
-     JOIN Request_Disposal rd ON rd.RequestID = r.RequestID AND rd.AssetID = ?
-     WHERE r.CurrentState IN (${OPEN_STATES.map(()=>"?").join(",")})
-     ${excludeRequestId ? "AND r.RequestID <> ?" : ""}`,
-    [
-      assetId, ...OPEN_STATES, ...(excludeRequestId ? [excludeRequestId] : []),
-      assetId, ...OPEN_STATES, ...(excludeRequestId ? [excludeRequestId] : []),
-      assetId, ...OPEN_STATES, ...(excludeRequestId ? [excludeRequestId] : []),
-      assetId, ...OPEN_STATES, ...(excludeRequestId ? [excludeRequestId] : []),
-    ]
-  );
+  const args = [];
+  const inStates = OPEN_STATES.map(() => "?").join(",");
+  const condEx = (tbl) =>
+    excludeRequestId ? `AND r.RequestID <> ?` : "";
+
+  const sql = `
+    SELECT r.RequestID
+    FROM request r
+    JOIN request_allocation ra ON ra.RequestID = r.RequestID AND ra.AssetID = ?
+    WHERE r.CurrentState IN (${inStates}) ${condEx("ra")}
+    UNION
+    SELECT r.RequestID
+    FROM request r
+    JOIN request_maintenance rm ON rm.RequestID = r.RequestID AND rm.AssetID = ?
+    WHERE r.CurrentState IN (${inStates}) ${condEx("rm")}
+    UNION
+    SELECT r.RequestID
+    FROM request r
+    JOIN request_warranty rw ON rw.RequestID = r.RequestID AND rw.AssetID = ?
+    WHERE r.CurrentState IN (${inStates}) ${condEx("rw")}
+    UNION
+    SELECT r.RequestID
+    FROM request r
+    JOIN request_disposal rd ON rd.RequestID = r.RequestID AND rd.AssetID = ?
+    WHERE r.CurrentState IN (${inStates}) ${condEx("rd")}
+  `;
+
+  args.push(assetId, ...OPEN_STATES);
+  if (excludeRequestId) args.push(excludeRequestId);
+  args.push(assetId, ...OPEN_STATES);
+  if (excludeRequestId) args.push(excludeRequestId);
+  args.push(assetId, ...OPEN_STATES);
+  if (excludeRequestId) args.push(excludeRequestId);
+  args.push(assetId, ...OPEN_STATES);
+  if (excludeRequestId) args.push(excludeRequestId);
+
+  const [rows] = await conn.execute(sql, args);
   return rows.length > 0;
 };
 
@@ -98,7 +96,7 @@ const nowInRange = (start, end) => {
 
 const validateByType = (code, asset, payload) => {
   const { Quantity, IssueDescription, Reason, WarrantyProvider } = payload;
-  // Khi đã chỉ định AssetID, Quantity phải = 1
+  // Khi chỉ định AssetID, Quantity phải = 1 (theo rule hiện tại)
   if (Quantity != null && Number(Quantity) !== 1) {
     throw new AppError("QUANTITY_MUST_BE_1_FOR_ASSET", 400);
   }
@@ -112,10 +110,15 @@ const validateByType = (code, asset, payload) => {
     }
     case "MAINTENANCE": {
       const st = Number(asset.Status);
-      if ([ASSET_STATUS.DISPOSED, ASSET_STATUS.MAINTENANCE_OUT, ASSET_STATUS.WARRANTY_OUT].includes(st)) {
+      if (
+        [
+          ASSET_STATUS.DISPOSED,
+          ASSET_STATUS.MAINTENANCE_OUT,
+          ASSET_STATUS.WARRANTY_OUT,
+        ].includes(st)
+      ) {
         throw new AppError("ASSET_NOT_ALLOWED_FOR_MAINTENANCE", 409);
       }
-      // Nếu còn trong bảo hành => bắt dùng WARRANTY
       if (nowInRange(asset.WarrantyStartDate, asset.WarrantyEndDate)) {
         throw new AppError("ASSET_UNDER_WARRANTY_USE_WARRANTY_REQUEST", 409);
       }
@@ -142,7 +145,13 @@ const validateByType = (code, asset, payload) => {
       if (st === ASSET_STATUS.DISPOSED) {
         throw new AppError("ASSET_ALREADY_DISPOSED", 409);
       }
-      if ([ASSET_STATUS.ALLOCATED, ASSET_STATUS.MAINTENANCE_OUT, ASSET_STATUS.WARRANTY_OUT].includes(st)) {
+      if (
+        [
+          ASSET_STATUS.ALLOCATED,
+          ASSET_STATUS.MAINTENANCE_OUT,
+          ASSET_STATUS.WARRANTY_OUT,
+        ].includes(st)
+      ) {
         throw new AppError("ASSET_MUST_BE_AVAILABLE_BEFORE_DISPOSAL", 409);
       }
       if (!Reason || String(Reason).trim().length < 3) {
@@ -155,17 +164,36 @@ const validateByType = (code, asset, payload) => {
   }
 };
 
+const resolveTarget = async (conn, TargetUserID, TargetDepartmentID) => {
+  if (!TargetUserID) throw new AppError("TARGET_USER_REQUIRED", 400);
+
+  const [[u]] = await conn.execute(
+    "SELECT UserID, DepartmentID FROM `user` WHERE UserID = ?",
+    [TargetUserID]
+  );
+  if (!u) throw new AppError("TARGET_USER_NOT_FOUND", 400);
+
+  const deptId = TargetDepartmentID ?? u.DepartmentID ?? null;
+  if (deptId == null) throw new AppError("TARGET_DEPARTMENT_REQUIRED", 400);
+
+  return { targetUserId: Number(u.UserID), targetDeptId: Number(deptId) };
+};
+
 // --- Main ---
 const createRequest = async (data) => {
   const {
     RequesterUserID,
     Note,
-    type, typeCode, RequestTypeID,
+    type,
+    typeCode,
+    RequestTypeID,
     AssetID,
     Quantity,
     IssueDescription,
     Reason,
     WarrantyProvider,
+    TargetUserID,
+    TargetDepartmentID,
   } = data;
 
   if (!RequesterUserID) throw new AppError("REQUESTER_REQUIRED", 400);
@@ -174,69 +202,76 @@ const createRequest = async (data) => {
   try {
     await conn.beginTransaction();
 
-    // 1) Người yêu cầu tồn tại
     const requester = await requesterExists(conn, RequesterUserID);
 
-    // 2) Xác định loại + ID
     const code = String(typeCode || type || "").trim().toUpperCase();
     const reqTypeId = await resolveRequestTypeId(conn, RequestTypeID ?? code);
 
-    // 3) Khóa tài sản và lấy dữ liệu cần thiết
     const asset = await lockAsset(conn, AssetID);
-
-    // 4) Không cho tạo khi có request mở bất kỳ trên Asset (siết chặt nhất)
     const openAny = await hasOpenRequest(conn, AssetID);
     if (openAny) throw new AppError("ASSET_ALREADY_HAS_OPEN_REQUEST", 409);
 
-    // 5) Validate rule theo loại
-    validateByType(code, asset, { Quantity, IssueDescription, Reason, WarrantyProvider });
+    validateByType(code, asset, {
+      Quantity,
+      IssueDescription,
+      Reason,
+      WarrantyProvider,
+    });
 
-    // 6) Tạo Request
+    // ✅ xác định người/đơn vị nhận CHO MỌI LOẠI
+    const { targetUserId, targetDeptId } = await resolveTarget(
+      conn,
+      TargetUserID,
+      TargetDepartmentID
+    );
+
+    // insert request
     const [r] = await conn.execute(
-      `INSERT INTO Request
-       (RequestTypeID, RequesterUserID, CurrentState, CreatedAt, UpdatedAt, Note)
-       VALUES (?, ?, 'PENDING', NOW(), NOW(), ?)`,
-      [reqTypeId, RequesterUserID, Note || null]
+      `INSERT INTO request
+       (RequestTypeID, RequesterUserID, TargetUserID, TargetDepartmentID,
+        CurrentState, CreatedAt, UpdatedAt, Note)
+       VALUES (?, ?, ?, ?, 'PENDING', NOW(), NOW(), ?)`,
+      [reqTypeId, RequesterUserID, targetUserId, targetDeptId, Note || null]
     );
     const RequestID = r.insertId;
 
-    // 7) Ghi chi tiết theo loại
+    // insert detail theo loại
     switch (code) {
       case "ALLOCATION":
         await conn.execute(
-          `INSERT INTO Request_Allocation (RequestID, AssetID, Quantity)
+          `INSERT INTO request_allocation (RequestID, AssetID, Quantity)
            VALUES (?, ?, 1)`,
           [RequestID, AssetID]
         );
         break;
       case "MAINTENANCE":
         await conn.execute(
-          `INSERT INTO Request_Maintenance (RequestID, AssetID, IssueDescription, Quantity)
+          `INSERT INTO request_maintenance (RequestID, AssetID, IssueDescription, Quantity)
            VALUES (?, ?, ?, 1)`,
-          [RequestID, AssetID, IssueDescription.trim()]
+          [RequestID, AssetID, String(IssueDescription).trim()]
         );
         break;
       case "DISPOSAL":
         await conn.execute(
-          `INSERT INTO Request_Disposal (RequestID, AssetID, Reason, Quantity)
+          `INSERT INTO request_disposal (RequestID, AssetID, Reason, Quantity)
            VALUES (?, ?, ?, 1)`,
-          [RequestID, AssetID, Reason.trim()]
+          [RequestID, AssetID, String(Reason).trim()]
         );
         break;
       case "WARRANTY":
         await conn.execute(
-          `INSERT INTO Request_Warranty (RequestID, AssetID, WarrantyProvider, Quantity)
+          `INSERT INTO request_warranty (RequestID, AssetID, WarrantyProvider, Quantity)
            VALUES (?, ?, ?, 1)`,
-          [RequestID, AssetID, WarrantyProvider.trim()]
+          [RequestID, AssetID, String(WarrantyProvider).trim()]
         );
         break;
       default:
         throw new AppError("UNSUPPORTED_REQUEST_TYPE", 400);
     }
 
-    // 8) Log CREATED
+    // log created
     await conn.execute(
-      `INSERT INTO ApprovalHistory
+      `INSERT INTO approvalhistory
        (RequestID, ApproverUserID, DepartmentID, Action, ActionAt, Comment)
        VALUES (?, ?, ?, 'CREATED', NOW(), 'Người dùng tạo yêu cầu')`,
       [RequestID, RequesterUserID, requester?.DepartmentID ?? null]
@@ -248,12 +283,16 @@ const createRequest = async (data) => {
       RequestTypeID: reqTypeId,
       Code: code,
       RequesterUserID,
+      TargetUserID: targetUserId,
+      TargetDepartmentID: targetDeptId,
       CurrentState: "PENDING",
       Note: Note || null,
     };
   } catch (err) {
     await conn.rollback();
-    throw err instanceof AppError ? err : new AppError(err.message || "INTERNAL_ERROR", 500);
+    throw err instanceof AppError
+      ? err
+      : new AppError(err.message || "INTERNAL_ERROR", 500);
   } finally {
     conn.release();
   }

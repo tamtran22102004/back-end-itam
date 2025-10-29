@@ -1,17 +1,17 @@
-// services/RequestAllocation_Service.js
+// services/RequestWarranty_Service.js
 const db = require("../config/database");
 const AppError = require("../utils/AppError");
 const { v4: uuidv4 } = require("uuid");
 
-const approveRequestAllocation = async (id, data) => {
-  const ASSET_STATUS = {
-    AVAILABLE: 1,
-    ALLOCATED: 2,
-    MAINTENANCE_OUT: 3,
-    WARRANTY_OUT: 4,
-    DISPOSED: 5,
-  };
+const ASSET_STATUS = {
+  AVAILABLE: 1,
+  ALLOCATED: 2,
+  MAINTENANCE_OUT: 3,
+  WARRANTY_OUT: 4,
+  DISPOSED: 5,
+};
 
+const approveRequestWarranty = async (id, data) => {
   const StepID = Number(data.StepID || 0);
   const Action = String(data.Action || "").toUpperCase();
   const { ApproverUserID, DepartmentID, Comment } = data;
@@ -62,20 +62,23 @@ const approveRequestAllocation = async (id, data) => {
       return;
     }
 
-    // Bước 2 (MANAGER) -> kiểm tra asset + cấp phát
+    // Bước 2 (MANAGER) -> kiểm tra asset + đưa đi bảo hành
     if (Action === "APPROVED" && StepID === 2) {
-      // Lấy chi tiết allocation + khóa record liên quan
+      // Lấy chi tiết warranty + khóa
       const [rows] = await conn.execute(
-        `SELECT CAST(ra.AssetID AS CHAR(36)) AS AssetID, ra.Quantity
-         FROM request_allocation ra
-         WHERE ra.RequestID = ?
+        `SELECT
+            CAST(rw.AssetID AS CHAR(36)) AS AssetID,
+            rw.Quantity,
+            rw.WarrantyProvider
+         FROM request_warranty rw
+         WHERE rw.RequestID = ?
          FOR UPDATE`,
         [id]
       );
-      if (!rows.length) throw new AppError("ALLOC_NOT_FOUND", 404);
-      const { AssetID, Quantity } = rows[0];
+      if (!rows.length) throw new AppError("WARRANTY_NOT_FOUND", 404);
+      const { AssetID, Quantity, WarrantyProvider } = rows[0];
 
-      // 🔒 Khóa asset, lấy trạng thái & vị trí hiện tại (FROM)
+      // Khóa asset hiện tại
       const [[asset]] = await conn.execute(
         `SELECT Status,
                 EmployeeID AS CurrEmployeeID,
@@ -86,16 +89,16 @@ const approveRequestAllocation = async (id, data) => {
         [AssetID]
       );
       if (!asset) throw new AppError("ASSET_NOT_FOUND", 404);
-      if (Number(asset.Status) !== ASSET_STATUS.AVAILABLE) {
-        throw new AppError("ASSET_NOT_AVAILABLE", 409);
+      // Không cho gửi BH nếu đã DISPOSED hoặc đã WARRANTY_OUT
+      if ([ASSET_STATUS.DISPOSED, ASSET_STATUS.WARRANTY_OUT].includes(Number(asset.Status))) {
+        throw new AppError("ASSET_NOT_ALLOWED_FOR_WARRANTY", 409);
       }
 
-      // Xác định NGƯỜI NHẬN/ĐƠN VỊ NHẬN từ request
+      // Lấy người/đơn vị nhận từ request (đã chuẩn hóa ở create)
       let EmployeeReceiveID = reqRow.TargetUserID ?? null;
       let SectionReceiveID  = reqRow.TargetDepartmentID ?? null;
-      if (!EmployeeReceiveID) {
-        throw new AppError("TARGET_USER_NOT_SET_FOR_REQUEST", 400);
-      }
+      if (!EmployeeReceiveID) throw new AppError("TARGET_USER_NOT_SET_FOR_REQUEST", 400);
+
       if (SectionReceiveID == null) {
         const [[recvUser]] = await conn.execute(
           "SELECT DepartmentID FROM `user` WHERE UserID = ?",
@@ -104,18 +107,20 @@ const approveRequestAllocation = async (id, data) => {
         SectionReceiveID = recvUser ? (recvUser.DepartmentID ?? null) : null;
       }
 
-      // Ghi assethistory
+      // Ghi assethistory: xuất đi bảo hành
       const assetHistoryId = uuidv4();
-      const note = `Cấp phát cho User ${EmployeeReceiveID}`;
+      const note =
+        `Gửi bảo hành${WarrantyProvider ? ` (${WarrantyProvider})` : ""} cho User ${EmployeeReceiveID}`;
       const [ins] = await conn.execute(
         `INSERT INTO assethistory
           (ID, AssetID, RequestID, EmployeeID, SectionID,
            EmployeeReceiveID, SectionReceiveID, Quantity, Type, ActionAt, Note)
-         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 'ALLOCATED', NOW(), ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'WARRANTY_OUT', NOW(), ?)`,
         [
           assetHistoryId,
           AssetID,
           id,
+          asset.CurrEmployeeID ?? null,
           asset.CurrSectionID ?? null,
           EmployeeReceiveID,
           SectionReceiveID ?? null,
@@ -125,10 +130,10 @@ const approveRequestAllocation = async (id, data) => {
       );
       if (ins.affectedRows !== 1) throw new AppError("INSERT_AH_FAILED", 500);
 
-      // Cập nhật asset => ALLOCATED + gán người/đơn vị nhận
+      // Cập nhật asset => WARRANTY_OUT + gán theo nơi nhận (đúng nhu cầu "mọi loại có người nhận")
       await conn.execute(
         "UPDATE asset SET Status=?, EmployeeID=?, SectionID=? WHERE ID=?",
-        [ASSET_STATUS.ALLOCATED, EmployeeReceiveID, SectionReceiveID ?? null, AssetID]
+        [ASSET_STATUS.WARRANTY_OUT, EmployeeReceiveID, SectionReceiveID ?? null, AssetID]
       );
 
       // Cập nhật Request
@@ -141,7 +146,7 @@ const approveRequestAllocation = async (id, data) => {
       await conn.execute(
         `INSERT INTO approvalhistory
           (RequestID, ApproverUserID, DepartmentID, Action, ActionAt, Comment)
-         VALUES (?, ?, ?, 'CONFIRMED', NOW(), 'Đã cấp phát xong')`,
+         VALUES (?, ?, ?, 'CONFIRMED', NOW(), 'Đã gửi bảo hành')`,
         [id, ApproverUserID, DepartmentID]
       );
     }
@@ -149,55 +154,55 @@ const approveRequestAllocation = async (id, data) => {
     await conn.commit();
   } catch (err) {
     await conn.rollback();
-    console.error("approveRequestAllocation error:", err);
+    console.error("approveRequestWarranty error:", err);
     throw err instanceof AppError ? err : new AppError(err.message || "INTERNAL_ERROR", 500);
   } finally {
     conn.release();
   }
 };
 
-const getRequestAllocationDetail = async (id) => {
+const getRequestWarrantyDetail = async (id) => {
   const [[request]] = await db.execute(
     `SELECT * FROM request WHERE RequestID=?`,
     [id]
   );
-  const [alloc] = await db.execute(
-    `SELECT * FROM request_allocation WHERE RequestID=?`,
+  const [w] = await db.execute(
+    `SELECT * FROM request_warranty WHERE RequestID=?`,
     [id]
   );
   const [history] = await db.execute(
     `SELECT * FROM approvalhistory WHERE RequestID=? ORDER BY ActionAt ASC`,
     [id]
   );
-  return { request, allocation: alloc, approvalHistory: history };
+  return { request, warranty: w, approvalHistory: history };
 };
 
-const getAllRequestAllocationDetail = async () => {
-  
+// Lấy tất cả request loại WARRANTY (join theo Code để không lệ thuộc ID số)
+const getAllRequestWarrantyDetail = async () => {
   const [rows] = await db.execute(
     `SELECT
-      r.RequestID,
-      r.RequesterUserID,
-      r.TargetUserID,
-      r.TargetDepartmentID,
-      r.CurrentState,
-      r.CreatedAt,
-      r.UpdatedAt,
-      r.Note,
-      COALESCE(SUM(ra.Quantity), 0) AS TotalQuantity
+       r.RequestID,
+       r.RequesterUserID,
+       r.TargetUserID,
+       r.TargetDepartmentID,
+       r.CurrentState,
+       r.CreatedAt,
+       r.UpdatedAt,
+       r.Note,
+       COALESCE(SUM(rw.Quantity), 0) AS TotalQuantity
      FROM request r
-     LEFT JOIN request_allocation ra ON ra.RequestID = r.RequestID
-     WHERE r.RequestTypeID = 1
-     GROUP BY 
+     JOIN requesttype rt ON rt.RequestTypeID = r.RequestTypeID AND UPPER(rt.Code)='WARRANTY'
+     LEFT JOIN request_warranty rw ON rw.RequestID = r.RequestID
+     GROUP BY
        r.RequestID, r.RequesterUserID, r.TargetUserID, r.TargetDepartmentID,
        r.CurrentState, r.CreatedAt, r.UpdatedAt, r.Note
-     ORDER BY r.CreatedAt DESC;`
+     ORDER BY r.CreatedAt DESC`
   );
   return { requests: rows };
 };
 
 module.exports = {
-  approveRequestAllocation,
-  getRequestAllocationDetail,
-  getAllRequestAllocationDetail,
+  approveRequestWarranty,
+  getRequestWarrantyDetail,
+  getAllRequestWarrantyDetail,
 };

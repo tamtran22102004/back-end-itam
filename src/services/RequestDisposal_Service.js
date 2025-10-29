@@ -1,17 +1,17 @@
-// services/RequestAllocation_Service.js
+// services/RequestDisposal_Service.js
 const db = require("../config/database");
 const AppError = require("../utils/AppError");
 const { v4: uuidv4 } = require("uuid");
 
-const approveRequestAllocation = async (id, data) => {
-  const ASSET_STATUS = {
-    AVAILABLE: 1,
-    ALLOCATED: 2,
-    MAINTENANCE_OUT: 3,
-    WARRANTY_OUT: 4,
-    DISPOSED: 5,
-  };
+const ASSET_STATUS = {
+  AVAILABLE: 1,
+  ALLOCATED: 2,
+  MAINTENANCE_OUT: 3,
+  WARRANTY_OUT: 4,
+  DISPOSED: 5,
+};
 
+const approveRequestDisposal = async (id, data) => {
   const StepID = Number(data.StepID || 0);
   const Action = String(data.Action || "").toUpperCase();
   const { ApproverUserID, DepartmentID, Comment } = data;
@@ -62,20 +62,23 @@ const approveRequestAllocation = async (id, data) => {
       return;
     }
 
-    // Bước 2 (MANAGER) -> kiểm tra asset + cấp phát
+    // Bước 2 (MANAGER) -> kiểm tra asset + thanh lý
     if (Action === "APPROVED" && StepID === 2) {
-      // Lấy chi tiết allocation + khóa record liên quan
+      // Lấy chi tiết disposal + khóa
       const [rows] = await conn.execute(
-        `SELECT CAST(ra.AssetID AS CHAR(36)) AS AssetID, ra.Quantity
-         FROM request_allocation ra
-         WHERE ra.RequestID = ?
+        `SELECT
+            CAST(rd.AssetID AS CHAR(36)) AS AssetID,
+            rd.Quantity,
+            rd.Reason
+         FROM request_disposal rd
+         WHERE rd.RequestID = ?
          FOR UPDATE`,
         [id]
       );
-      if (!rows.length) throw new AppError("ALLOC_NOT_FOUND", 404);
-      const { AssetID, Quantity } = rows[0];
+      if (!rows.length) throw new AppError("DISPOSAL_NOT_FOUND", 404);
+      const { AssetID, Quantity, Reason } = rows[0];
 
-      // 🔒 Khóa asset, lấy trạng thái & vị trí hiện tại (FROM)
+      // Khóa asset hiện tại
       const [[asset]] = await conn.execute(
         `SELECT Status,
                 EmployeeID AS CurrEmployeeID,
@@ -86,16 +89,23 @@ const approveRequestAllocation = async (id, data) => {
         [AssetID]
       );
       if (!asset) throw new AppError("ASSET_NOT_FOUND", 404);
-      if (Number(asset.Status) !== ASSET_STATUS.AVAILABLE) {
-        throw new AppError("ASSET_NOT_AVAILABLE", 409);
+
+      // Phải AVAILABLE mới thanh lý (theo rule trước đó)
+      const st = Number(asset.Status);
+      if (
+        st === ASSET_STATUS.DISPOSED ||
+        st === ASSET_STATUS.ALLOCATED ||
+        st === ASSET_STATUS.MAINTENANCE_OUT ||
+        st === ASSET_STATUS.WARRANTY_OUT
+      ) {
+        throw new AppError("ASSET_MUST_BE_AVAILABLE_BEFORE_DISPOSAL", 409);
       }
 
-      // Xác định NGƯỜI NHẬN/ĐƠN VỊ NHẬN từ request
+      // Lấy người/đơn vị nhận (phía “đầu thanh lý”) từ request
       let EmployeeReceiveID = reqRow.TargetUserID ?? null;
       let SectionReceiveID  = reqRow.TargetDepartmentID ?? null;
-      if (!EmployeeReceiveID) {
-        throw new AppError("TARGET_USER_NOT_SET_FOR_REQUEST", 400);
-      }
+      if (!EmployeeReceiveID) throw new AppError("TARGET_USER_NOT_SET_FOR_REQUEST", 400);
+
       if (SectionReceiveID == null) {
         const [[recvUser]] = await conn.execute(
           "SELECT DepartmentID FROM `user` WHERE UserID = ?",
@@ -104,18 +114,19 @@ const approveRequestAllocation = async (id, data) => {
         SectionReceiveID = recvUser ? (recvUser.DepartmentID ?? null) : null;
       }
 
-      // Ghi assethistory
+      // Ghi assethistory: DISPOSED
       const assetHistoryId = uuidv4();
-      const note = `Cấp phát cho User ${EmployeeReceiveID}`;
+      const note = `Thanh lý${Reason ? ` - ${Reason}` : ""} cho User ${EmployeeReceiveID}`;
       const [ins] = await conn.execute(
         `INSERT INTO assethistory
           (ID, AssetID, RequestID, EmployeeID, SectionID,
            EmployeeReceiveID, SectionReceiveID, Quantity, Type, ActionAt, Note)
-         VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 'ALLOCATED', NOW(), ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'DISPOSED', NOW(), ?)`,
         [
           assetHistoryId,
           AssetID,
           id,
+          asset.CurrEmployeeID ?? null,
           asset.CurrSectionID ?? null,
           EmployeeReceiveID,
           SectionReceiveID ?? null,
@@ -125,10 +136,10 @@ const approveRequestAllocation = async (id, data) => {
       );
       if (ins.affectedRows !== 1) throw new AppError("INSERT_AH_FAILED", 500);
 
-      // Cập nhật asset => ALLOCATED + gán người/đơn vị nhận
+      // Cập nhật asset => DISPOSED + clear vị trí
       await conn.execute(
-        "UPDATE asset SET Status=?, EmployeeID=?, SectionID=? WHERE ID=?",
-        [ASSET_STATUS.ALLOCATED, EmployeeReceiveID, SectionReceiveID ?? null, AssetID]
+        "UPDATE asset SET Status=?, EmployeeID=NULL, SectionID=NULL WHERE ID=?",
+        [ASSET_STATUS.DISPOSED, AssetID]
       );
 
       // Cập nhật Request
@@ -141,7 +152,7 @@ const approveRequestAllocation = async (id, data) => {
       await conn.execute(
         `INSERT INTO approvalhistory
           (RequestID, ApproverUserID, DepartmentID, Action, ActionAt, Comment)
-         VALUES (?, ?, ?, 'CONFIRMED', NOW(), 'Đã cấp phát xong')`,
+         VALUES (?, ?, ?, 'CONFIRMED', NOW(), 'Đã thanh lý')`,
         [id, ApproverUserID, DepartmentID]
       );
     }
@@ -149,55 +160,49 @@ const approveRequestAllocation = async (id, data) => {
     await conn.commit();
   } catch (err) {
     await conn.rollback();
-    console.error("approveRequestAllocation error:", err);
+    console.error("approveRequestDisposal error:", err);
     throw err instanceof AppError ? err : new AppError(err.message || "INTERNAL_ERROR", 500);
   } finally {
     conn.release();
   }
 };
 
-const getRequestAllocationDetail = async (id) => {
-  const [[request]] = await db.execute(
-    `SELECT * FROM request WHERE RequestID=?`,
-    [id]
-  );
-  const [alloc] = await db.execute(
-    `SELECT * FROM request_allocation WHERE RequestID=?`,
-    [id]
-  );
+const getRequestDisposalDetail = async (id) => {
+  const [[request]] = await db.execute(`SELECT * FROM request WHERE RequestID=?`, [id]);
+  const [d] = await db.execute(`SELECT * FROM request_disposal WHERE RequestID=?`, [id]);
   const [history] = await db.execute(
     `SELECT * FROM approvalhistory WHERE RequestID=? ORDER BY ActionAt ASC`,
     [id]
   );
-  return { request, allocation: alloc, approvalHistory: history };
+  return { request, disposal: d, approvalHistory: history };
 };
 
-const getAllRequestAllocationDetail = async () => {
-  
+// Lấy tất cả request loại DISPOSAL (theo Code)
+const getAllRequestDisposalDetail = async () => {
   const [rows] = await db.execute(
     `SELECT
-      r.RequestID,
-      r.RequesterUserID,
-      r.TargetUserID,
-      r.TargetDepartmentID,
-      r.CurrentState,
-      r.CreatedAt,
-      r.UpdatedAt,
-      r.Note,
-      COALESCE(SUM(ra.Quantity), 0) AS TotalQuantity
+       r.RequestID,
+       r.RequesterUserID,
+       r.TargetUserID,
+       r.TargetDepartmentID,
+       r.CurrentState,
+       r.CreatedAt,
+       r.UpdatedAt,
+       r.Note,
+       COALESCE(SUM(rd.Quantity), 0) AS TotalQuantity
      FROM request r
-     LEFT JOIN request_allocation ra ON ra.RequestID = r.RequestID
-     WHERE r.RequestTypeID = 1
-     GROUP BY 
+     JOIN requesttype rt ON rt.RequestTypeID = r.RequestTypeID AND UPPER(rt.Code)='DISPOSAL'
+     LEFT JOIN request_disposal rd ON rd.RequestID = r.RequestID
+     GROUP BY
        r.RequestID, r.RequesterUserID, r.TargetUserID, r.TargetDepartmentID,
        r.CurrentState, r.CreatedAt, r.UpdatedAt, r.Note
-     ORDER BY r.CreatedAt DESC;`
+     ORDER BY r.CreatedAt DESC`
   );
   return { requests: rows };
 };
 
 module.exports = {
-  approveRequestAllocation,
-  getRequestAllocationDetail,
-  getAllRequestAllocationDetail,
+  approveRequestDisposal,
+  getRequestDisposalDetail,
+  getAllRequestDisposalDetail,
 };
