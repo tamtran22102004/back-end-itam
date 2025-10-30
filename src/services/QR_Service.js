@@ -1,7 +1,7 @@
 // services/QR_Service.js
 const db = require("../config/database");
 const AppError = require("../utils/AppError");
-const { signToken } = require("../utils/qr.util");
+const { signToken } = require("../utils/qr");
 const QRCode = require("qrcode");
 
 const ensureAssetQr = async (assetId, { force = false } = {}) => {

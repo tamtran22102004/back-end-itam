@@ -3,7 +3,10 @@ const Asset_Controller = require("../controllers/Asset_Controller");
 const validate = require("../middleware/validate");
 const AppError = require("../utils/AppError");
 const AssetValidator = require("../validator/Asset_Validator")
+
+
 const router = express.Router();
+
 router.get("/", Asset_Controller.getAsset);
 router.post(
   "/add",
@@ -28,5 +31,12 @@ router.post("/assetconfig/delete/:id",Asset_Controller.deleteAssetConfig)
 router.get("/assetdetail/:id",Asset_Controller.getAssetDetail)
 
 router.get("/assethistory",Asset_Controller.getAssetHistory)
+
+
+
+
+
+
+
 
 module.exports = router

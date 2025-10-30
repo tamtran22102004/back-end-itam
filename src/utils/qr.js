@@ -42,5 +42,11 @@ function buildApiBase(req) {
     req.headers["x-forwarded-host"] || req.get("host") || "localhost:3000";
   return `${proto}://${host}`;
 }
+function parseAndVerify(token) {
+  const assetId = verifyToken(token);
+  if (!assetId) return null;
+  return { assetId }; // Trả về object để tương thích với code router
+}
 
-module.exports = { signToken, verifyToken, buildApiBase };
+
+module.exports = { signToken, verifyToken, buildApiBase, parseAndVerify };

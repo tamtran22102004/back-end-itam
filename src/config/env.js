@@ -13,6 +13,7 @@ const config = {
   app: {
     ENVIROMENT: process.env.ENVIROMENT,
     port: process.env.PORT,
+    PUBLIC_WEB_ORIGIN: process.env.PUBLIC_WEB_ORIGIN,
   },
   db: {
     host: process.env.DB_HOST,

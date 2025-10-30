@@ -1,6 +1,8 @@
 const db = require("../config/database");
 const AppError = require("../utils/AppError");
 const { v4: uuidv4 } = require("uuid");
+const { signToken } = require("../utils/qr");
+
 // Trả về null nếu là undefined / null / chuỗi rỗng
 const toNull = (v) =>
   v === undefined || v === null || (typeof v === "string" && v.trim() === "")
@@ -64,8 +66,8 @@ const createAssetService = async (data) => {
 
   try {
     const {
-      ManageCode, // NOT NULL
-      CategoryID, // NOT NULL
+      ManageCode,
+      CategoryID,
       AssetCode,
       Name,
       ItemMasterID,
@@ -90,21 +92,23 @@ const createAssetService = async (data) => {
 
     await conn.beginTransaction();
 
-    // Lấy ManageType nếu có ItemMasterID; nếu không, coi như QUANTITY
+    // Xác định ManageType
     let manageType = "QUANTITY";
     if (toNull(ItemMasterID)) {
-      const [imRows] = await conn.execute(
+      const [[im]] = await conn.execute(
         "SELECT ManageType FROM itemmaster WHERE ID = ?",
         [ItemMasterID]
       );
-      if (!imRows.length) throw new AppError("ItemMaster không tồn tại", 400);
-      manageType = imRows[0].ManageType;
+      if (!im) throw new AppError("ItemMaster không tồn tại", 400);
+      manageType = im.ManageType;
     }
-
     const realQuantity =
       manageType === "INDIVIDUAL" ? 1 : toPositiveIntOr(Quantity, 1);
 
-    // 1) INSERT asset (null đúng chỗ nullable)
+    // 🔐 Tự sinh QR token nếu client không gửi
+    const qrToken = QRCode ? String(QRCode) : signToken(assetId);
+
+    // INSERT asset
     await conn.execute(
       `INSERT INTO asset 
         (ID, ManageCode, AssetCode, Name, CategoryID, ItemMasterID, VendorID, 
@@ -113,10 +117,10 @@ const createAssetService = async (data) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         assetId,
-        ManageCode, // NOT NULL
+        ManageCode,
         toNull(AssetCode),
         toNull(Name),
-        CategoryID, // NOT NULL
+        CategoryID,
         toNull(ItemMasterID),
         toNull(VendorID),
         toNull(PurchaseDate),
@@ -128,32 +132,28 @@ const createAssetService = async (data) => {
         toNull(SerialNumber),
         toNull(EmployeeID),
         toNull(SectionID),
-        realQuantity, // NOT NULL (>=1)
-        toNull(QRCode),
+        realQuantity,
+        qrToken, // ✅ ghi token vào DB
         toNull(Status),
       ]
     );
 
-    // 2) Copy cấu hình từ ItemMaster → AssetAttributeValue (nếu có ItemMasterID)
+    // Copy cấu hình từ ItemMaster → AssetAttributeValue
     if (toNull(ItemMasterID)) {
       await conn.execute(
         `INSERT INTO assetattributevalue (AttributeID, AssetID, Value)
-         SELECT AttributeID, ?, Value 
-         FROM itemmasterattributevalue 
-         WHERE ItemMasterID = ?`,
+         SELECT AttributeID, ?, Value FROM itemmasterattributevalue WHERE ItemMasterID = ?`,
         [assetId, ItemMasterID]
       );
     }
 
-    // 3) Lịch sử nhập kho
-    const historyId = uuidv4();
+    // Lịch sử nhập kho
     await conn.execute(
       `INSERT INTO assethistory (ID, AssetID, Quantity, Type, ActionAt, Note)
        VALUES (?, ?, ?, 'AVAILABLE', NOW(), ?)`,
-      [historyId, assetId, realQuantity, "Nhập kho tự động khi tạo thiết bị"]
+      [uuidv4(), assetId, realQuantity, "Nhập kho tự động khi tạo thiết bị"]
     );
 
-    // 4) KHÔNG đụng itemmaster.* — trigger lo
     await conn.commit();
 
     return {
@@ -174,7 +174,7 @@ const createAssetService = async (data) => {
       EmployeeID: toNull(EmployeeID),
       SectionID: toNull(SectionID),
       Quantity: realQuantity,
-      QRCode: toNull(QRCode),
+      QRCode: qrToken, // ✅ trả về token
       Status: toNull(Status),
     };
   } catch (error) {
