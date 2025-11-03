@@ -18,7 +18,7 @@ const resolveRequestTypeId = async (conn, typeInput) => {
   const code = String(typeInput || "").trim().toUpperCase();
   if (!code) throw new AppError("REQUEST_TYPE_REQUIRED", 400);
   const [[row]] = await conn.execute(
-    "SELECT RequestTypeID, Code FROM `requesttype` WHERE UPPER(Code) = ?",
+    "SELECT RequestTypeID, Code FROM requesttype WHERE UPPER(Code) = ?",
     [code]
   );
   if (!row) throw new AppError("REQUEST_TYPE_NOT_FOUND", 400);
@@ -40,7 +40,7 @@ const lockAsset = async (conn, assetId) => {
 
 const requesterExists = async (conn, requesterId) => {
   const [[u]] = await conn.execute(
-    "SELECT UserID, DepartmentID FROM `user` WHERE UserID = ?",
+    "SELECT UserID, DepartmentID FROM user WHERE UserID = ?",
     [requesterId]
   );
   if (!u) throw new AppError("REQUESTER_NOT_FOUND", 400);

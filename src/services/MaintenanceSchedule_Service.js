@@ -13,7 +13,7 @@ const getSchedules = async (query = {}) => {
   if (to) { where.push("NextMaintenanceDate <= ?"); params.push(to); }
 
   const sql = `
-    SELECT * FROM MaintenanceSchedule
+    SELECT * FROM maintenanceschedule
     ${where.length ? "WHERE " + where.join(" AND ") : ""}
     ORDER BY NextMaintenanceDate ASC, Priority DESC
     LIMIT 500
@@ -39,7 +39,7 @@ const createSchedule = async (payload) => {
   } = payload;
 
   await db.execute(
-    `INSERT INTO MaintenanceSchedule
+    `INSERT INTO maintenanceschedule
       (AssetID, IntervalMonths, NextMaintenanceDate, LastMaintenanceDate, Status,
        CreatedByUserID, AssignedToUserID, ReminderDaysBefore, WindowStart, WindowEnd,
        EstimatedHours, Priority, Notes, AutoCreateWorkOrder)
@@ -68,14 +68,14 @@ const updateSchedule = async (id, updates = {}) => {
     await conn.beginTransaction();
 
     const [[ms]] = await conn.execute(
-      "SELECT * FROM MaintenanceSchedule WHERE ScheduleID=? FOR UPDATE",
+      "SELECT * FROM maintenanceschedule WHERE ScheduleID=? FOR UPDATE",
       [id]
     );
     if (!ms) throw new AppError("SCHEDULE_NOT_FOUND", 404);
 
     if (updates.Cancel === true) {
       if (ms.Status !== "CANCELLED") {
-        await conn.execute("UPDATE MaintenanceSchedule SET Status='CANCELLED' WHERE ScheduleID=?", [id]);
+        await conn.execute("UPDATE maintenanceschedule SET Status='CANCELLED' WHERE ScheduleID=?", [id]);
       }
       await conn.commit();
       return { ScheduleID: id, Status: "CANCELLED" };
@@ -117,7 +117,7 @@ const updateSchedule = async (id, updates = {}) => {
     }
     params.push(id);
 
-    await conn.execute(`UPDATE MaintenanceSchedule SET ${sets.join(", ")} WHERE ScheduleID=?`, params);
+    await conn.execute(`UPDATE maintenanceschedule SET ${sets.join(", ")} WHERE ScheduleID=?`, params);
     await conn.commit();
     return { ScheduleID: id, updated: true };
   } catch (e) {
@@ -134,7 +134,7 @@ const generateWOForCurrentCycle = async (scheduleId, userId = null) => {
     await conn.beginTransaction();
 
     const [[ms]] = await conn.execute(
-      "SELECT * FROM MaintenanceSchedule WHERE ScheduleID=? FOR UPDATE",
+      "SELECT * FROM maintenanceschedule WHERE ScheduleID=? FOR UPDATE",
       [scheduleId]
     );
     if (!ms) throw new AppError("SCHEDULE_NOT_FOUND", 404);
@@ -143,7 +143,7 @@ const generateWOForCurrentCycle = async (scheduleId, userId = null) => {
 
     // Yêu cầu: tạo UNIQUE KEY uq_mwo_sched_due (ScheduleID, DueDate) cho idempotent
     await conn.execute(
-      `INSERT INTO MaintenanceWorkOrder
+      `INSERT INTO maintenanceworkorder
          (ScheduleID, AssetID, DueDate, AssignedToUserID, CreatedByUserID, Status)
        VALUES (?, ?, ?, ?, ?, 'OPEN')
        ON DUPLICATE KEY UPDATE WorkOrderID=WorkOrderID`,

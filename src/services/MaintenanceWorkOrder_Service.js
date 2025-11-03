@@ -12,7 +12,7 @@ const getWorkOrders = async (query = {}) => {
   if (to) { where.push("DueDate<=?"); params.push(to); }
 
   const sql = `
-    SELECT * FROM MaintenanceWorkOrder
+    SELECT * FROM maintenanceworkorder
     ${where.length ? "WHERE " + where.join(" AND ") : ""}
     ORDER BY DueDate ASC, WorkOrderID DESC
     LIMIT 500
@@ -34,7 +34,7 @@ const createWorkOrder = async (payload) => {
   } = payload;
 
   await db.execute(
-    `INSERT INTO MaintenanceWorkOrder
+    `INSERT INTO maintenanceworkorder
       (ScheduleID, AssetID, DueDate, PlannedStart, PlannedEnd, AssignedToUserID, CreatedByUserID, Status, ResultNotes)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)`,
     [ScheduleID, AssetID, DueDate, PlannedStart, PlannedEnd, AssignedToUserID, CreatedByUserID, Notes]
@@ -48,14 +48,14 @@ const startWorkOrder = async (workOrderId, PlannedStart = null) => {
     await conn.beginTransaction();
 
     const [[wo]] = await conn.execute(
-      "SELECT * FROM MaintenanceWorkOrder WHERE WorkOrderID=? FOR UPDATE",
+      "SELECT * FROM maintenanceworkorder WHERE WorkOrderID=? FOR UPDATE",
       [workOrderId]
     );
     if (!wo) throw new AppError("WORK_ORDER_NOT_FOUND", 404);
     if (wo.Status !== "OPEN") throw new AppError("WORK_ORDER_NOT_OPEN", 409);
 
     await conn.execute(
-      `UPDATE MaintenanceWorkOrder
+      `UPDATE maintenanceworkorder
        SET Status='IN_PROGRESS', PlannedStart=COALESCE(?, NOW())
        WHERE WorkOrderID=?`,
       [PlannedStart, workOrderId]
@@ -63,7 +63,7 @@ const startWorkOrder = async (workOrderId, PlannedStart = null) => {
 
     // Ghi lịch sử xuất bảo trì (OUT)
     await conn.execute(
-      `INSERT INTO AssetHistory
+      `INSERT INTO assethistory
          (ID, AssetID, RequestID, EmployeeID, SectionID, EmployeeReceiveID, SectionReceiveID, Quantity, Type, ActionAt, Note)
        VALUES (UUID(), ?, NULL, NULL, NULL, NULL, NULL, 1, 'MAINTENANCE_OUT', NOW(), CONCAT('WO#', ?, ' start'))`,
       [wo.AssetID, workOrderId]
@@ -85,7 +85,7 @@ const completeWorkOrder = async (workOrderId, CompletedAt, ResultNotes = null, C
     await conn.beginTransaction();
 
     const [[wo]] = await conn.execute(
-      "SELECT * FROM MaintenanceWorkOrder WHERE WorkOrderID=? FOR UPDATE",
+      "SELECT * FROM maintenanceworkorder WHERE WorkOrderID=? FOR UPDATE",
       [workOrderId]
     );
     if (!wo) throw new AppError("WORK_ORDER_NOT_FOUND", 404);
@@ -94,7 +94,7 @@ const completeWorkOrder = async (workOrderId, CompletedAt, ResultNotes = null, C
 
     // 1) Đánh dấu DONE
     await conn.execute(
-      `UPDATE MaintenanceWorkOrder
+      `UPDATE maintenanceworkorder
        SET Status='DONE', CompletedAt=?, ResultNotes=?, Cost=?
        WHERE WorkOrderID=?`,
       [CompletedAt, ResultNotes, Cost, workOrderId]
@@ -102,7 +102,7 @@ const completeWorkOrder = async (workOrderId, CompletedAt, ResultNotes = null, C
 
     // 2) Log nhập bảo trì (IN)
     await conn.execute(
-      `INSERT INTO AssetHistory
+      `INSERT INTO assethistory
          (ID, AssetID, RequestID, EmployeeID, SectionID, EmployeeReceiveID, SectionReceiveID, Quantity, Type, ActionAt, Note)
        VALUES (UUID(), ?, NULL, NULL, NULL, NULL, NULL, 1, 'MAINTENANCE_IN', ?, CONCAT('WO#', ?, ' done'))`,
       [wo.AssetID, CompletedAt, workOrderId]
@@ -111,12 +111,12 @@ const completeWorkOrder = async (workOrderId, CompletedAt, ResultNotes = null, C
     // 3) Cập nhật Schedule nếu có
     if (wo.ScheduleID && UpdateScheduleNext) {
       const [[ms]] = await conn.execute(
-        "SELECT * FROM MaintenanceSchedule WHERE ScheduleID=? FOR UPDATE",
+        "SELECT * FROM maintenanceschedule WHERE ScheduleID=? FOR UPDATE",
         [wo.ScheduleID]
       );
       if (ms) {
         await conn.execute(
-          `UPDATE MaintenanceSchedule
+          `UPDATE maintenanceschedule
            SET LastMaintenanceDate = DATE(?),
                NextMaintenanceDate = CASE
                  WHEN COALESCE(IntervalMonths,0) <= 0 THEN NULL
@@ -144,7 +144,7 @@ const completeWorkOrder = async (workOrderId, CompletedAt, ResultNotes = null, C
 
 const cancelWorkOrder = async (workOrderId, Reason = null) => {
   const [ret] = await db.execute(
-    `UPDATE MaintenanceWorkOrder
+    `UPDATE maintenanceworkorder
      SET Status='CANCELLED',
          ResultNotes=CONCAT(COALESCE(ResultNotes,''), ' | Cancel: ', ?)
      WHERE WorkOrderID=? AND Status IN ('OPEN','IN_PROGRESS')`,

@@ -49,9 +49,7 @@ LEFT JOIN user u_from ON u_from.UserID = ah.EmployeeID
 LEFT JOIN user u_to ON u_to.UserID = ah.EmployeeReceiveID
 LEFT JOIN department d_from ON d_from.DepartmentID = ah.SectionID
 LEFT JOIN department d_to ON d_to.DepartmentID = ah.SectionReceiveID
-ORDER BY ah.ActionAt DESC;
-
-    `);
+ORDER BY ah.ActionAt DESC;`);
   return rows;
 };
 
