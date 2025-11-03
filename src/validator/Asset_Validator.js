@@ -8,8 +8,8 @@ const AppError = require("../utils/AppError");
 const checkUnique = async (field, value, excludeId = null) => {
   if (!value) return; // bỏ qua nếu không có giá trị
   const sql = excludeId
-    ? `SELECT ID FROM Asset WHERE ${field} = ? AND ID != ? LIMIT 1`
-    : `SELECT ID FROM Asset WHERE ${field} = ? LIMIT 1`;
+    ? `SELECT ID FROM asset WHERE ${field} = ? AND ID != ? LIMIT 1`
+    : `SELECT ID FROM asset WHERE ${field} = ? LIMIT 1`;
 
   const [rows] = excludeId
     ? await db.execute(sql, [value, excludeId])

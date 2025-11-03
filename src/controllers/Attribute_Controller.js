@@ -17,14 +17,7 @@ const getAttribute = async (req, res, next) => {
 };
 const createAttribute = async (req, res, next) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return next(new AppError("Validation Error", 400, errors.array()));
-    }
     const { name, measurementUnit } = req.body;
-    if (!name || !measurementUnit) {
-      return next(new AppError("Missing required params", 400));
-    }
     const result = await AttributeService.createAttribute(name, measurementUnit);
     return successResponse(res, 200, result, "Create attribute successfully");
   } catch (error) {
@@ -37,7 +30,8 @@ const createAttribute = async (req, res, next) => {
 };
 const updateAttribute = async (req, res, next) => {
   try {
-    const { id, name, measurementUnit } = req.body;
+    const { id } = req.params;
+    const { name, measurementUnit } = req.body;
     const result = await AttributeService.updateAttribute(
       id,
       name,
