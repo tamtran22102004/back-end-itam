@@ -2,6 +2,7 @@ const db = require("../config/database");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const AppError = require("../utils/AppError");
+const { get } = require("mongoose");
 
 // Tìm user theo email
 async function findUserByEmail(email) {
@@ -70,6 +71,10 @@ const getDepartment = async () => {
   const [rows] = await db.execute("SELECT * FROM department");
   return rows;
 };
+const getLocation = async () => { 
+  const [rows] = await db.execute("SELECT * FROM location");
+  return rows;
+};
 
 module.exports = {
   findUserByEmail,
@@ -77,4 +82,5 @@ module.exports = {
   login,
   getUserInfo,
   getDepartment,
+  getLocation,
 };

@@ -2,10 +2,12 @@ const Asset_Service = require("../services/Asset_Service");
 const AppError = require("../utils/AppError");
 const { validationResult } = require("express-validator");
 const { successResponse } = require("../utils/formatResponse");
-const { get } = require("mongoose");
 
 const createAsset = async (req, res, next) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty())
+      return next(new AppError(errors.array()[0].msg, 400));
     const result = await Asset_Service.createAssetService(req.body);
     return successResponse(res, 200, result, "Create Asset Successfully");
   } catch (error) {
@@ -31,6 +33,9 @@ const getAsset = async (req, res, next) => {
 };
 const updateAsset = async (req, res, next) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty())
+      return next(new AppError(errors.array()[0].msg, 400));
     const { id } = req.params;
     const result = await Asset_Service.updateAssetService(id, req.body);
     return successResponse(res, 200, result, "Cập nhật Asset thành công");

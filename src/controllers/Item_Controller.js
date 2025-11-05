@@ -1,7 +1,6 @@
 const AppError = require("../utils/AppError");
 const { successResponse } = require("../utils/formatResponse");
 const ItemService = require("../services/Item_Service");
-const { app } = require("../config/env");
 
 const getItemMaster = async (req, res, next) => {
   try {

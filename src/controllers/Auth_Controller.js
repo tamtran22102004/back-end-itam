@@ -1,3 +1,4 @@
+const { get } = require("mongoose");
 const Auth_Service = require("../services/Auth_Service");
 const AppError = require("../utils/AppError");
 const wrap = require("../utils/Wrap");
@@ -58,7 +59,7 @@ const getUserInfo = async (req, res, next) => {
         : new AppError(error.message || "Internal Server Error", 500)
     );
   }
-}
+};
 const getDepartment = async (req, res, next) => {
   try {
     const result = await Auth_Service.getDepartment();
@@ -70,11 +71,24 @@ const getDepartment = async (req, res, next) => {
         : new AppError(error.message || "Internal Server Error", 500)
     );
   }
-}
+};
+const getLocation = async (req, res, next) => {
+  try {
+    const result = await Auth_Service.getLocation();
+    return successResponse(res, 200, result, "Get Location successfully");
+  } catch (error) {
+    next(
+      error instanceof AppError
+        ? error
+        : new AppError(error.message || "Internal Server Error", 500)
+    );
+  }
+};
 
 module.exports = {
   RegisterUser,
   LoginUser,
   getUserInfo,
-  getDepartment
+  getDepartment,
+  getLocation,
 };

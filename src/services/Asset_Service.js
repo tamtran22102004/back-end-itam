@@ -41,15 +41,15 @@ const getAssetHistory = async () => {
     ah.Type,
     ah.ActionAt,
     ah.Note
-FROM assethistory ah
-LEFT JOIN asset a ON a.ID = ah.AssetID
-LEFT JOIN request r ON r.RequestID = ah.RequestID
-LEFT JOIN requesttype rt ON rt.RequestTypeID = r.RequestTypeID
-LEFT JOIN user u_from ON u_from.UserID = ah.EmployeeID
-LEFT JOIN user u_to ON u_to.UserID = ah.EmployeeReceiveID
-LEFT JOIN department d_from ON d_from.DepartmentID = ah.SectionID
-LEFT JOIN department d_to ON d_to.DepartmentID = ah.SectionReceiveID
-ORDER BY ah.ActionAt DESC;`);
+      FROM assethistory ah
+      LEFT JOIN asset a ON a.ID = ah.AssetID
+      LEFT JOIN request r ON r.RequestID = ah.RequestID
+      LEFT JOIN requesttype rt ON rt.RequestTypeID = r.RequestTypeID
+      LEFT JOIN user u_from ON u_from.UserID = ah.EmployeeID
+      LEFT JOIN user u_to ON u_to.UserID = ah.EmployeeReceiveID
+      LEFT JOIN department d_from ON d_from.DepartmentID = ah.SectionID
+      LEFT JOIN department d_to ON d_to.DepartmentID = ah.SectionReceiveID
+      ORDER BY ah.ActionAt DESC;`);
   return rows;
 };
 
@@ -111,8 +111,8 @@ const createAssetService = async (data) => {
       `INSERT INTO asset 
         (ID, ManageCode, AssetCode, Name, CategoryID, ItemMasterID, VendorID, 
          PurchaseDate, PurchasePrice, PurchaseId, WarrantyStartDate, WarrantyEndDate, 
-         WarrantyMonth, SerialNumber, EmployeeID, SectionID, Quantity, QRCode, Status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         WarrantyMonth, SerialNumber, EmployeeID, SectionID, Quantity,RemainQuantity, QRCode, Status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)`,
       [
         assetId,
         ManageCode,
@@ -130,6 +130,7 @@ const createAssetService = async (data) => {
         toNull(SerialNumber),
         toNull(EmployeeID),
         toNull(SectionID),
+        realQuantity,
         realQuantity,
         qrToken, // ✅ ghi token vào DB
         toNull(Status),
@@ -461,7 +462,6 @@ const getAssetDetail = async (id) => {
   const [rows] = await db.execute(
     `
     SELECT 
-      -- 🎯 Toàn bộ cột của asset
       a.ID AS AssetID,
       a.ManageCode,
       a.AssetCode,
@@ -486,6 +486,7 @@ d.DepartmentName AS DepartmentName,
       a.Quantity,
       a.QRCode,
       a.Status,
+      a.RemainQuantity,
 
       -- 🔹 Thông tin thuộc tính kỹ thuật
       attr.ID AS AttributeID,
@@ -535,6 +536,7 @@ d.DepartmentName AS DepartmentName,
     SectionID: a.SectionID,
     DepartmentName: a.DepartmentName,
     Quantity: a.Quantity,
+    RemainQuantity: a.RemainQuantity,
     QRCode: a.QRCode,
     Status: a.Status,
   };

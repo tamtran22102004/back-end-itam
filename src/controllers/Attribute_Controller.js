@@ -3,7 +3,7 @@ const AppError = require("../utils/AppError");
 const { validationResult } = require("express-validator");
 const { successResponse } = require("../utils/formatResponse");
 
-const getAttribute = async (req, res, next) => {
+const getAttribute = async ( req,res, next) => {
   try {
     const result = await AttributeService.getAttribute();
     return successResponse(res, 200, result, "Get attribute successfully");

@@ -14,7 +14,7 @@ const MaintenanceSchedule_Router = require("./MaintenanceSchedule_Router");
 const RequestWarranty_Router = require("./RequestWarranty_Router");
 const RequestDisposal_Router = require("./RequestDisposal_Router");
 const QR_Router = require("./QR_Router");
-
+const Stocktake_Router = require("./Stocktake_Router");
 router.use("/qr", QR_Router);
 router.use("/", Auth_Router);
 router.use("/category", Category_Router);
@@ -28,5 +28,6 @@ router.use("/requestmaintenance", requestMaintenance_Router);
 router.use("/requestwarranty", RequestWarranty_Router);
 router.use("/maintenance", MaintenanceSchedule_Router);
 router.use("/requestdisposal", RequestDisposal_Router);
+router.use("/stocktake", Stocktake_Router);
 
 module.exports = router;

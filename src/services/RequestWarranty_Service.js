@@ -9,7 +9,15 @@ const ASSET_STATUS = {
   MAINTENANCE_OUT: 3,
   WARRANTY_OUT: 4,
   DISPOSED: 5,
+  IN_USE: 6, // hàng dùng chung (hết hàng)
 };
+
+// === Helper: xác định trạng thái mới ===
+function determineAssetStatus(originalQty, remainQty, statusMap) {
+  if (remainQty > 0) return statusMap.AVAILABLE; // còn hàng
+  if (originalQty === 1) return statusMap.WARRANTY_OUT; // cá nhân
+  return statusMap.IN_USE; // hàng nhiều -> hết hàng
+}
 
 const approveRequestWarranty = async (id, data) => {
   const StepID = Number(data.StepID || 0);
@@ -20,7 +28,7 @@ const approveRequestWarranty = async (id, data) => {
   try {
     await conn.beginTransaction();
 
-    // 0) Khóa request + lấy target
+    // 🔒 Khóa request
     const [[reqRow]] = await conn.execute(
       `SELECT CurrentState, TargetUserID, TargetDepartmentID, RequesterUserID
        FROM request
@@ -33,15 +41,22 @@ const approveRequestWarranty = async (id, data) => {
       throw new AppError(`REQUEST_FINAL_${reqRow.CurrentState}`, 409);
     }
 
-    // 1) Log hành động hiện tại
+    // Ghi log bước hiện tại
     await conn.execute(
       `INSERT INTO approvalhistory
         (RequestID, StepID, ApproverUserID, DepartmentID, Action, ActionAt, Comment)
        VALUES (?, ?, ?, ?, ?, NOW(), ?)`,
-      [id, StepID || null, ApproverUserID, DepartmentID, Action, Comment || null]
+      [
+        id,
+        StepID || null,
+        ApproverUserID,
+        DepartmentID,
+        Action,
+        Comment || null,
+      ]
     );
 
-    // ============ REJECTED ============
+    // ❌ REJECTED
     if (Action === "REJECTED") {
       await conn.execute(
         `UPDATE request SET CurrentState='REJECTED', UpdatedAt=NOW() WHERE RequestID=?`,
@@ -51,8 +66,7 @@ const approveRequestWarranty = async (id, data) => {
       return;
     }
 
-    // ============ APPROVED ============
-    // Bước 1 -> chuyển bước 2
+    // ✅ APPROVED STEP 1 → STEP 2
     if (Action === "APPROVED" && StepID === 1) {
       await conn.execute(
         `UPDATE request SET CurrentState='IN_PROGRESS_STEP_2', UpdatedAt=NOW() WHERE RequestID=?`,
@@ -62,14 +76,13 @@ const approveRequestWarranty = async (id, data) => {
       return;
     }
 
-    // Bước 2 (MANAGER) -> kiểm tra asset + đưa đi bảo hành
+    // ✅ APPROVED STEP 2 (MANAGER)
     if (Action === "APPROVED" && StepID === 2) {
-      // Lấy chi tiết warranty + khóa
+      // Lấy chi tiết warranty
       const [rows] = await conn.execute(
-        `SELECT
-            CAST(rw.AssetID AS CHAR(36)) AS AssetID,
-            rw.Quantity,
-            rw.WarrantyProvider
+        `SELECT CAST(rw.AssetID AS CHAR(36)) AS AssetID,
+                rw.Quantity,
+                rw.WarrantyProvider
          FROM request_warranty rw
          WHERE rw.RequestID = ?
          FOR UPDATE`,
@@ -78,40 +91,47 @@ const approveRequestWarranty = async (id, data) => {
       if (!rows.length) throw new AppError("WARRANTY_NOT_FOUND", 404);
       const { AssetID, Quantity, WarrantyProvider } = rows[0];
 
-      // Khóa asset hiện tại
+      // Khóa asset
       const [[asset]] = await conn.execute(
-        `SELECT Status,
+        `SELECT Quantity, RemainQuantity,
                 EmployeeID AS CurrEmployeeID,
-                SectionID  AS CurrSectionID
+                SectionID  AS CurrSectionID,
+                Status
          FROM asset
          WHERE ID = ?
          FOR UPDATE`,
         [AssetID]
       );
       if (!asset) throw new AppError("ASSET_NOT_FOUND", 404);
-      // Không cho gửi BH nếu đã DISPOSED hoặc đã WARRANTY_OUT
-      if ([ASSET_STATUS.DISPOSED, ASSET_STATUS.WARRANTY_OUT].includes(Number(asset.Status))) {
+
+      // Kiểm tra không hợp lệ
+      if (
+        [ASSET_STATUS.DISPOSED, ASSET_STATUS.WARRANTY_OUT].includes(
+          Number(asset.Status)
+        )
+      ) {
         throw new AppError("ASSET_NOT_ALLOWED_FOR_WARRANTY", 409);
       }
 
-      // Lấy người/đơn vị nhận từ request (đã chuẩn hóa ở create)
+      // Lấy người/đơn vị nhận (bên bảo hành)
       let EmployeeReceiveID = reqRow.TargetUserID ?? null;
-      let SectionReceiveID  = reqRow.TargetDepartmentID ?? null;
-      if (!EmployeeReceiveID) throw new AppError("TARGET_USER_NOT_SET_FOR_REQUEST", 400);
-
+      let SectionReceiveID = reqRow.TargetDepartmentID ?? null;
+      if (!EmployeeReceiveID)
+        throw new AppError("TARGET_USER_NOT_SET_FOR_REQUEST", 400);
       if (SectionReceiveID == null) {
         const [[recvUser]] = await conn.execute(
           "SELECT DepartmentID FROM `user` WHERE UserID = ?",
           [EmployeeReceiveID]
         );
-        SectionReceiveID = recvUser ? (recvUser.DepartmentID ?? null) : null;
+        SectionReceiveID = recvUser ? recvUser.DepartmentID ?? null : null;
       }
 
-      // Ghi assethistory: xuất đi bảo hành
+      // Ghi assethistory
       const assetHistoryId = uuidv4();
-      const note =
-        `Gửi bảo hành${WarrantyProvider ? ` (${WarrantyProvider})` : ""} cho User ${EmployeeReceiveID}`;
-      const [ins] = await conn.execute(
+      const note = `Gửi bảo hành${
+        WarrantyProvider ? ` (${WarrantyProvider})` : ""
+      } cho User ${EmployeeReceiveID}`;
+      await conn.execute(
         `INSERT INTO assethistory
           (ID, AssetID, RequestID, EmployeeID, SectionID,
            EmployeeReceiveID, SectionReceiveID, Quantity, Type, ActionAt, Note)
@@ -128,15 +148,32 @@ const approveRequestWarranty = async (id, data) => {
           note,
         ]
       );
-      if (ins.affectedRows !== 1) throw new AppError("INSERT_AH_FAILED", 500);
 
-      // Cập nhật asset => WARRANTY_OUT + gán theo nơi nhận (đúng nhu cầu "mọi loại có người nhận")
-      await conn.execute(
-        "UPDATE asset SET Status=?, EmployeeID=?, SectionID=? WHERE ID=?",
-        [ASSET_STATUS.WARRANTY_OUT, EmployeeReceiveID, SectionReceiveID ?? null, AssetID]
+      // ⚙️ Cập nhật RemainQuantity + Status
+      const remain = Number(asset.RemainQuantity ?? 0) - Number(Quantity ?? 1);
+      const newStatus = determineAssetStatus(
+        Number(asset.Quantity ?? 1),
+        remain,
+        ASSET_STATUS
       );
 
-      // Cập nhật Request
+      await conn.execute(
+        `UPDATE asset
+           SET RemainQuantity = ?,
+               Status = ?,
+               EmployeeID = ?,
+               SectionID = ?
+         WHERE ID = ?`,
+        [
+          remain,
+          newStatus,
+          EmployeeReceiveID,
+          SectionReceiveID ?? null,
+          AssetID,
+        ]
+      );
+
+      // Update request
       await conn.execute(
         `UPDATE request SET CurrentState='APPROVED', UpdatedAt=NOW() WHERE RequestID=?`,
         [id]
@@ -146,7 +183,7 @@ const approveRequestWarranty = async (id, data) => {
       await conn.execute(
         `INSERT INTO approvalhistory
           (RequestID, ApproverUserID, DepartmentID, Action, ActionAt, Comment)
-         VALUES (?, ?, ?, 'CONFIRMED', NOW(), 'Đã gửi bảo hành')`,
+         VALUES (?, ?, ?, 'CONFIRMED', NOW(), 'Đã gửi bảo hành và cập nhật tồn kho/trạng thái')`,
         [id, ApproverUserID, DepartmentID]
       );
     }
@@ -155,7 +192,9 @@ const approveRequestWarranty = async (id, data) => {
   } catch (err) {
     await conn.rollback();
     console.error("approveRequestWarranty error:", err);
-    throw err instanceof AppError ? err : new AppError(err.message || "INTERNAL_ERROR", 500);
+    throw err instanceof AppError
+      ? err
+      : new AppError(err.message || "INTERNAL_ERROR", 500);
   } finally {
     conn.release();
   }

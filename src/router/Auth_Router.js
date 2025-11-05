@@ -16,4 +16,5 @@ router.post("/login", authValidator.login, validate, Auth_Controller.LoginUser);
 
 router.get("/getuserinfo", Auth_Controller.getUserInfo);
 router.get("/getdepartment", Auth_Controller.getDepartment);
+router.get("/getlocation", Auth_Controller.getLocation);
 module.exports = router; //export default

@@ -15,7 +15,9 @@ const OPEN_STATES = ["PENDING", "IN_PROGRESS_STEP_1", "IN_PROGRESS_STEP_2"]; // 
 // --- Helpers ---
 const resolveRequestTypeId = async (conn, typeInput) => {
   if (typeInput != null && !isNaN(Number(typeInput))) return Number(typeInput);
-  const code = String(typeInput || "").trim().toUpperCase();
+  const code = String(typeInput || "")
+    .trim()
+    .toUpperCase();
   if (!code) throw new AppError("REQUEST_TYPE_REQUIRED", 400);
   const [[row]] = await conn.execute(
     "SELECT RequestTypeID, Code FROM requesttype WHERE UPPER(Code) = ?",
@@ -50,8 +52,7 @@ const requesterExists = async (conn, requesterId) => {
 const hasOpenRequest = async (conn, assetId, excludeRequestId = null) => {
   const args = [];
   const inStates = OPEN_STATES.map(() => "?").join(",");
-  const condEx = (tbl) =>
-    excludeRequestId ? `AND r.RequestID <> ?` : "";
+  const condEx = (tbl) => (excludeRequestId ? `AND r.RequestID <> ?` : "");
 
   const sql = `
     SELECT r.RequestID
@@ -94,76 +95,6 @@ const nowInRange = (start, end) => {
   return now >= new Date(start) && now <= new Date(end);
 };
 
-const validateByType = (code, asset, payload) => {
-  const { Quantity, IssueDescription, Reason, WarrantyProvider } = payload;
-  // Khi chỉ định AssetID, Quantity phải = 1 (theo rule hiện tại)
-  if (Quantity != null && Number(Quantity) !== 1) {
-    throw new AppError("QUANTITY_MUST_BE_1_FOR_ASSET", 400);
-  }
-
-  switch (code) {
-    case "ALLOCATION": {
-      if (Number(asset.Status) !== ASSET_STATUS.AVAILABLE) {
-        throw new AppError("ASSET_NOT_AVAILABLE", 409);
-      }
-      return;
-    }
-    case "MAINTENANCE": {
-      const st = Number(asset.Status);
-      if (
-        [
-          ASSET_STATUS.DISPOSED,
-          ASSET_STATUS.MAINTENANCE_OUT,
-          ASSET_STATUS.WARRANTY_OUT,
-        ].includes(st)
-      ) {
-        throw new AppError("ASSET_NOT_ALLOWED_FOR_MAINTENANCE", 409);
-      }
-      if (nowInRange(asset.WarrantyStartDate, asset.WarrantyEndDate)) {
-        throw new AppError("ASSET_UNDER_WARRANTY_USE_WARRANTY_REQUEST", 409);
-      }
-      if (!IssueDescription || String(IssueDescription).trim().length < 5) {
-        throw new AppError("ISSUE_DESCRIPTION_REQUIRED", 400);
-      }
-      return;
-    }
-    case "WARRANTY": {
-      const st = Number(asset.Status);
-      if ([ASSET_STATUS.DISPOSED, ASSET_STATUS.WARRANTY_OUT].includes(st)) {
-        throw new AppError("ASSET_NOT_ALLOWED_FOR_WARRANTY", 409);
-      }
-      if (!nowInRange(asset.WarrantyStartDate, asset.WarrantyEndDate)) {
-        throw new AppError("WARRANTY_EXPIRED_OR_NOT_ACTIVE", 409);
-      }
-      if (!WarrantyProvider || !String(WarrantyProvider).trim()) {
-        throw new AppError("WARRANTY_PROVIDER_REQUIRED", 400);
-      }
-      return;
-    }
-    case "DISPOSAL": {
-      const st = Number(asset.Status);
-      if (st === ASSET_STATUS.DISPOSED) {
-        throw new AppError("ASSET_ALREADY_DISPOSED", 409);
-      }
-      if (
-        [
-          ASSET_STATUS.ALLOCATED,
-          ASSET_STATUS.MAINTENANCE_OUT,
-          ASSET_STATUS.WARRANTY_OUT,
-        ].includes(st)
-      ) {
-        throw new AppError("ASSET_MUST_BE_AVAILABLE_BEFORE_DISPOSAL", 409);
-      }
-      if (!Reason || String(Reason).trim().length < 3) {
-        throw new AppError("DISPOSAL_REASON_REQUIRED", 400);
-      }
-      return;
-    }
-    default:
-      throw new AppError("UNSUPPORTED_REQUEST_TYPE", 400);
-  }
-};
-
 const resolveTarget = async (conn, TargetUserID, TargetDepartmentID) => {
   if (!TargetUserID) throw new AppError("TARGET_USER_REQUIRED", 400);
 
@@ -204,19 +135,12 @@ const createRequest = async (data) => {
 
     const requester = await requesterExists(conn, RequesterUserID);
 
-    const code = String(typeCode || type || "").trim().toUpperCase();
+    const code = String(typeCode || type || "")
+      .trim()
+      .toUpperCase();
     const reqTypeId = await resolveRequestTypeId(conn, RequestTypeID ?? code);
 
     const asset = await lockAsset(conn, AssetID);
-    const openAny = await hasOpenRequest(conn, AssetID);
-    if (openAny) throw new AppError("ASSET_ALREADY_HAS_OPEN_REQUEST", 409);
-
-    validateByType(code, asset, {
-      Quantity,
-      IssueDescription,
-      Reason,
-      WarrantyProvider,
-    });
 
     // ✅ xác định người/đơn vị nhận CHO MỌI LOẠI
     const { targetUserId, targetDeptId } = await resolveTarget(
@@ -240,29 +164,29 @@ const createRequest = async (data) => {
       case "ALLOCATION":
         await conn.execute(
           `INSERT INTO request_allocation (RequestID, AssetID, Quantity)
-           VALUES (?, ?, 1)`,
-          [RequestID, AssetID]
+           VALUES (?, ?, ?)`,
+          [RequestID, AssetID, Quantity]
         );
         break;
       case "MAINTENANCE":
         await conn.execute(
           `INSERT INTO request_maintenance (RequestID, AssetID, IssueDescription, Quantity)
-           VALUES (?, ?, ?, 1)`,
-          [RequestID, AssetID, String(IssueDescription).trim()]
+           VALUES (?, ?, ?, ?)`,
+          [RequestID, AssetID, String(IssueDescription).trim(), Quantity]
         );
         break;
       case "DISPOSAL":
         await conn.execute(
           `INSERT INTO request_disposal (RequestID, AssetID, Reason, Quantity)
-           VALUES (?, ?, ?, 1)`,
-          [RequestID, AssetID, String(Reason).trim()]
+           VALUES (?, ?, ?, ?)`,
+          [RequestID, AssetID, String(Reason).trim(), Quantity]
         );
         break;
       case "WARRANTY":
         await conn.execute(
           `INSERT INTO request_warranty (RequestID, AssetID, WarrantyProvider, Quantity)
-           VALUES (?, ?, ?, 1)`,
-          [RequestID, AssetID, String(WarrantyProvider).trim()]
+           VALUES (?, ?, ?, ?)`,
+          [RequestID, AssetID, String(WarrantyProvider).trim(), Quantity]
         );
         break;
       default:
