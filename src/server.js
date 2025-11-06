@@ -18,10 +18,6 @@ app.use(express.urlencoded({ extended: true }));
 // ✅ mount router tại /api (chỉ 1 lần)
 app.use("/api", router);
 
-app.get("/api/ping", (req, res) => {
-  res.send("pong");
-});
-
 app.use(errorHandler);
 
 (async () => {
