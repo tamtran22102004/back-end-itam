@@ -52,9 +52,7 @@ const qrPngByAssetId = async (req, res, next) => {
     return res.send(buf);
   } catch (err) {
     return next(
-      err instanceof AppError
-        ? err
-        : new AppError("QR_PNG_GENERATION_FAILED", 500)
+      err instanceof AppError ? err : new AppError("QR_PNG_GENERATION_FAILED", 500)
     );
   }
 };
@@ -71,17 +69,11 @@ const resolveToken = async (req, res, next) => {
       throw new AppError("QR_TOKEN_REVOKED_OR_NOT_FOUND", 404);
     }
 
-    const FE = config.PUBLIC_WEB_ORIGIN || "https://front-end-itam.vercel.app";
-    const redirectUrl = `${FE}/assetdetail/${encodeURIComponent(
-      parsed.assetId
-    )}`;
+    const FE = config.PUBLIC_WEB_ORIGIN || "http://localhost:5173";
+    const redirectUrl = `${FE}/assetdetail/${encodeURIComponent(parsed.assetId)}`;
 
     if (String(req.query.json || "") === "1") {
-      const data = {
-        success: true,
-        assetId: parsed.assetId,
-        redirect: redirectUrl,
-      };
+      const data = { success: true, assetId: parsed.assetId, redirect: redirectUrl };
       return successResponse(res, 200, data, "QR Token resolved successfully");
     }
     return res.redirect(302, redirectUrl);

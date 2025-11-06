@@ -144,6 +144,19 @@ const getAssetHistory = async (req, res, next) => {
     );
   }
 };
+const getAssetHistoryByAssetID = async (req, res, next) => {
+  try {
+    const  assetID  = req.params.id;
+    const result =  await Asset_Service.getAssetHistoryByAssetID(assetID);
+    return successResponse(res, 200,result, "Get AssetHistoryDetail Successfully");
+  } catch (error) {
+    next(
+      error instanceof AppError
+        ? error
+        : new AppError(error.message || "Internal Server Error", 500)
+    );
+  }
+};
 module.exports = {
   createAsset,
   getAsset,
@@ -155,4 +168,5 @@ module.exports = {
   deleteAssetConfig,
   getAssetDetail,
   getAssetHistory,
+  getAssetHistoryByAssetID
 };
