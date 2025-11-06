@@ -69,7 +69,7 @@ const resolveToken = async (req, res, next) => {
       throw new AppError("QR_TOKEN_REVOKED_OR_NOT_FOUND", 404);
     }
 
-    const FE = config.PUBLIC_WEB_ORIGIN || "http://localhost:5173";
+    const FE = config.app.PUBLIC_WEB_ORIGIN || "http://localhost:5173";
     const redirectUrl = `${FE}/assetdetail/${encodeURIComponent(parsed.assetId)}`;
 
     if (String(req.query.json || "") === "1") {
