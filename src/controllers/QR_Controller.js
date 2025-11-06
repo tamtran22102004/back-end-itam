@@ -70,7 +70,7 @@ const resolveToken = async (req, res, next) => {
     }
 
     const FE = config.app.PUBLIC_WEB_ORIGIN || "http://localhost:5173";
-    const redirectUrl = `${FE}/assetdetail/${encodeURIComponent(parsed.assetId)}`;
+    const redirectUrl = `${FE}/#/assetdetail/${encodeURIComponent(parsed.assetId)}`;
 
     if (String(req.query.json || "") === "1") {
       const data = { success: true, assetId: parsed.assetId, redirect: redirectUrl };
