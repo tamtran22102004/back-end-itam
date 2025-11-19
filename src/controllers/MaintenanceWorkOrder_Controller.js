@@ -3,24 +3,31 @@ const AppError = require("../utils/AppError");
 const { validationResult } = require("express-validator");
 const { successResponse } = require("../utils/formatResponse");
 
-// GET /api/maintenance/workorders?status=&asset=&from=&to=&assignee=
+/* ============================================================
+   GET WORK ORDERS
+   GET /api/maintenance/workorders?status=&asset=&assignee=&scheduleAssetId=&from=&to=
+============================================================ */
 const getWorkOrders = async (req, res, next) => {
   try {
     const result = await MaintenanceWorkOrder_Service.getWorkOrders(req.query);
     return successResponse(res, 200, result, "Get work orders successfully");
   } catch (error) {
-    next(error instanceof AppError ? error : new AppError(error.message || "Internal Server Error", 500));
+    next(
+      error instanceof AppError
+        ? error
+        : new AppError("Internal Server Error", 500)
+    );
   }
 };
 
-// POST /api/maintenance/workorders
+/* ============================================================
+   CREATE WORK ORDER
+   POST /api/maintenance/workorders
+============================================================ */
 const createWorkOrder = async (req, res, next) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return next(new AppError("Validation Error", 400, errors.array()));
-
     const {
-      ScheduleID,
+      ScheduleAssetID,
       AssetID,
       DueDate,
       PlannedStart,
@@ -29,27 +36,34 @@ const createWorkOrder = async (req, res, next) => {
       Notes,
     } = req.body;
 
-    if (!AssetID || !DueDate) return next(new AppError("Missing required params", 400));
+    if (!ScheduleAssetID)
+      return next(new AppError("ScheduleAssetID is required", 400));
+    if (!AssetID) return next(new AppError("AssetID is required", 400));
+    if (!DueDate) return next(new AppError("DueDate is required", 400));
+
     const userId = req.user?.UserID || null;
 
     const result = await MaintenanceWorkOrder_Service.createWorkOrder({
-      ScheduleID,
+      ScheduleAssetID,
       AssetID,
       DueDate,
       PlannedStart,
       PlannedEnd,
       AssignedToUserID,
       Notes,
-      CreatedByUserID: userId,
+      CreatedByUserID: req.user?.UserID || null,
     });
+
     return successResponse(res, 200, result, "Create work order successfully");
   } catch (error) {
-    next(error instanceof AppError ? error : new AppError(error.message || "Internal Server Error", 500));
+    next(error instanceof AppError ? error : new AppError(error.message, 500));
   }
 };
 
-// PATCH /api/maintenance/workorders/:id/start
-// body: { PlannedStart?, ReceiverUserID (required), ReceiverDepartmentID? }
+/* ============================================================
+   START WORK ORDER
+   PATCH /api/maintenance/workorders/:id/start
+============================================================ */
 const startWorkOrder = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -57,21 +71,23 @@ const startWorkOrder = async (req, res, next) => {
       PlannedStart = null,
       ReceiverUserID,
       ReceiverDepartmentID = null,
-    } = req.body || {};
+    } = req.body;
 
-    const woId = Number(id);
-    if (!woId) return next(new AppError("Invalid work order id", 400));
+    if (!Number(id)) return next(new AppError("Invalid WorkOrderID", 400));
     if (!ReceiverUserID)
       return next(new AppError("ReceiverUserID is required", 400));
 
-    const result = await MaintenanceWorkOrder_Service.startWorkOrder(woId, {
-      PlannedStart,
-      ReceiverUserID: Number(ReceiverUserID),
-      ReceiverDepartmentID:
-        ReceiverDepartmentID !== undefined && ReceiverDepartmentID !== null
-          ? Number(ReceiverDepartmentID)
-          : null,
-    });
+    const result = await MaintenanceWorkOrder_Service.startWorkOrder(
+      Number(id),
+      {
+        PlannedStart,
+        ReceiverUserID: Number(ReceiverUserID),
+        ReceiverDepartmentID:
+          ReceiverDepartmentID !== null && ReceiverDepartmentID !== undefined
+            ? Number(ReceiverDepartmentID)
+            : null,
+      }
+    );
 
     return successResponse(res, 200, result, "Start work order successfully");
   } catch (error) {
@@ -83,11 +99,10 @@ const startWorkOrder = async (req, res, next) => {
   }
 };
 
-// PATCH /api/maintenance/workorders/:id/complete
-// body: {
-//   CompletedAt?, ResultNotes?, Cost?, UpdateScheduleNext?=true,
-//   ReturnUserID (required), ReturnDepartmentID?
-// }
+/* ============================================================
+   COMPLETE WORK ORDER
+   PATCH /api/maintenance/workorders/:id/complete
+============================================================ */
 const completeWorkOrder = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -98,26 +113,33 @@ const completeWorkOrder = async (req, res, next) => {
       UpdateScheduleNext = true,
       ReturnUserID,
       ReturnDepartmentID = null,
-    } = req.body || {};
+    } = req.body;
 
-    const woId = Number(id);
-    if (!woId) return next(new AppError("Invalid work order id", 400));
+    if (!Number(id)) return next(new AppError("Invalid WorkOrderID", 400));
     if (!ReturnUserID)
       return next(new AppError("ReturnUserID is required", 400));
 
-    const result = await MaintenanceWorkOrder_Service.completeWorkOrder(woId, {
-      CompletedAt,
-      ResultNotes,
-      Cost: Cost !== undefined && Cost !== null ? Number(Cost) : null,
-      UpdateScheduleNext: Boolean(UpdateScheduleNext),
-      ReturnUserID: Number(ReturnUserID),
-      ReturnDepartmentID:
-        ReturnDepartmentID !== undefined && ReturnDepartmentID !== null
-          ? Number(ReturnDepartmentID)
-          : null,
-    });
+    const result = await MaintenanceWorkOrder_Service.completeWorkOrder(
+      Number(id),
+      {
+        CompletedAt,
+        ResultNotes,
+        Cost: Cost !== null && Cost !== undefined ? Number(Cost) : null,
+        UpdateScheduleNext: Boolean(UpdateScheduleNext),
+        ReturnUserID: Number(ReturnUserID),
+        ReturnDepartmentID:
+          ReturnDepartmentID !== null && ReturnDepartmentID !== undefined
+            ? Number(ReturnDepartmentID)
+            : null,
+      }
+    );
 
-    return successResponse(res, 200, result, "Complete work order successfully");
+    return successResponse(
+      res,
+      200,
+      result,
+      "Complete work order successfully"
+    );
   } catch (error) {
     next(
       error instanceof AppError
@@ -127,15 +149,29 @@ const completeWorkOrder = async (req, res, next) => {
   }
 };
 
-// PATCH /api/maintenance/workorders/:id/cancel
+/* ============================================================
+   CANCEL WORK ORDER
+   PATCH /api/maintenance/workorders/:id/cancel
+============================================================ */
 const cancelWorkOrder = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { Reason } = req.body || {};
-    const result = await MaintenanceWorkOrder_Service.cancelWorkOrder(Number(id), Reason);
+    const { Reason = null } = req.body;
+
+    if (!Number(id)) return next(new AppError("Invalid WorkOrderID", 400));
+
+    const result = await MaintenanceWorkOrder_Service.cancelWorkOrder(
+      Number(id),
+      Reason
+    );
+
     return successResponse(res, 200, result, "Cancel work order successfully");
   } catch (error) {
-    next(error instanceof AppError ? error : new AppError(error.message || "Internal Server Error", 500));
+    next(
+      error instanceof AppError
+        ? error
+        : new AppError(error.message || "Internal Server Error", 500)
+    );
   }
 };
 

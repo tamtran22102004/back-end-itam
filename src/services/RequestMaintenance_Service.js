@@ -5,18 +5,26 @@ const { v4: uuidv4 } = require("uuid");
 
 const ASSET_STATUS = {
   AVAILABLE: 1,
-  ALLOCATED: 2, // cá nhân
-  MAINTENANCE_OUT: 3, // đang bảo trì
-  WARRANTY_OUT: 4,
+  ALLOCATED: 2,      // cá nhân
+  MAINTENANCE_OUT: 4,// đang bảo trì
+  WARRANTY_OUT: 3,
   DISPOSED: 5,
-  IN_USE: 6, // dùng chung
+  IN_USE: 6,         // dùng chung / đang nằm ngoài
 };
 
-// Helper: xác định trạng thái mới sau khi đưa đi bảo trì
-function determineAssetStatus(originalQty, remainQty, statusMap) {
-  if (remainQty > 0) return statusMap.AVAILABLE; // vẫn còn hàng
-  if (originalQty === 1) return statusMap.MAINTENANCE_OUT; // cá nhân -> đã xuất đi
-  return statusMap.IN_USE; // dùng chung -> đã xuất hết
+// Helper: xác định trạng thái mới sau khi đưa đi bảo trì (OUT)
+function determineStatusAfterMaintenanceOut(originalQty, remainQty, statusMap) {
+  // Còn hàng trong kho → vẫn AVAILABLE
+  if (remainQty > 0) return statusMap.AVAILABLE;
+
+  // Hết hàng trong kho
+  if (originalQty === 1) {
+    // Trường hợp asset chỉ có 1 cái → đang đi bảo trì
+    return statusMap.MAINTENANCE_OUT;
+  }
+
+  // Hàng nhiều cái nhưng đã gửi hết đi (đều nằm ngoài) → coi là IN_USE
+  return statusMap.IN_USE;
 }
 
 const approveRequestMaintenance = async (id, data) => {
@@ -37,8 +45,9 @@ const approveRequestMaintenance = async (id, data) => {
       [id]
     );
     if (!reqRow) throw new AppError("REQUEST_NOT_FOUND", 404);
-    if (["APPROVED", "REJECTED", "CANCELLED"].includes(reqRow.CurrentState))
+    if (["APPROVED", "REJECTED", "CANCELLED"].includes(reqRow.CurrentState)) {
       throw new AppError(`REQUEST_FINAL_${reqRow.CurrentState}`, 409);
+    }
 
     // Ghi log bước hiện tại
     await conn.execute(
@@ -58,7 +67,9 @@ const approveRequestMaintenance = async (id, data) => {
     // ❌ REJECTED
     if (Action === "REJECTED") {
       await conn.execute(
-        `UPDATE request SET CurrentState='REJECTED', UpdatedAt=NOW() WHERE RequestID=?`,
+        `UPDATE request 
+         SET CurrentState='REJECTED', UpdatedAt=NOW() 
+         WHERE RequestID=?`,
         [id]
       );
       await conn.commit();
@@ -68,50 +79,31 @@ const approveRequestMaintenance = async (id, data) => {
     // ✅ Bước 1 -> 2
     if (Action === "APPROVED" && StepID === 1) {
       await conn.execute(
-        `UPDATE request SET CurrentState='IN_PROGRESS_STEP_2', UpdatedAt=NOW() WHERE RequestID=?`,
+        `UPDATE request 
+         SET CurrentState='IN_PROGRESS_STEP_2', UpdatedAt=NOW() 
+         WHERE RequestID=?`,
         [id]
       );
       await conn.commit();
       return;
     }
 
-    // ✅ Bước 2: Duyệt chính thức (Manager)
+    // ✅ Bước 2: Duyệt chính thức (Manager) – xử lý N tài sản
     if (Action === "APPROVED" && StepID === 2) {
+      // Lấy toàn bộ dòng request_maintenance của phiếu này
       const [rows] = await conn.execute(
-        `SELECT CAST(rm.AssetID AS CHAR(36)) AS AssetID, rm.Quantity, rm.IssueDescription
+        `SELECT 
+            CAST(rm.AssetID AS CHAR(36)) AS AssetID, 
+            rm.Quantity, 
+            rm.IssueDescription
          FROM request_maintenance rm
          WHERE rm.RequestID = ?
          FOR UPDATE`,
         [id]
       );
       if (!rows.length) throw new AppError("MAINT_NOT_FOUND", 404);
-      const { AssetID, Quantity, IssueDescription } = rows[0];
 
-      // Lock asset
-      const [[asset]] = await conn.execute(
-        `SELECT Quantity, RemainQuantity,
-                EmployeeID AS CurrEmployeeID,
-                SectionID  AS CurrSectionID,
-                Status
-         FROM asset
-         WHERE ID = ?
-         FOR UPDATE`,
-        [AssetID]
-      );
-      if (!asset) throw new AppError("ASSET_NOT_FOUND", 404);
-
-      // Ngăn bảo trì khi đã disposed hoặc đang out
-      if (
-        [
-          ASSET_STATUS.DISPOSED,
-          ASSET_STATUS.MAINTENANCE_OUT,
-          ASSET_STATUS.WARRANTY_OUT,
-        ].includes(Number(asset.Status))
-      ) {
-        throw new AppError("ASSET_NOT_ALLOWED_FOR_MAINTENANCE", 409);
-      }
-
-      // Người/đơn vị nhận (nơi bảo trì)
+      // Nơi nhận bảo trì (vendor / bộ phận kỹ thuật…)
       let EmployeeReceiveID = reqRow.TargetUserID ?? null;
       let SectionReceiveID = reqRow.TargetDepartmentID ?? null;
       if (SectionReceiveID == null && EmployeeReceiveID != null) {
@@ -122,58 +114,129 @@ const approveRequestMaintenance = async (id, data) => {
         SectionReceiveID = recvUser ? recvUser.DepartmentID ?? null : null;
       }
 
-      // Lịch sử
-      const assetHistoryId = uuidv4();
-      const note = `Xuất bảo trì ${Quantity ?? 1} thiết bị${
-        IssueDescription ? ` - ${IssueDescription}` : ""
-      }`;
-      await conn.execute(
-        `INSERT INTO assethistory
-          (ID, AssetID, RequestID, EmployeeID, SectionID,
-           EmployeeReceiveID, SectionReceiveID, Quantity, Type, ActionAt, Note)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'MAINTENANCE_OUT', NOW(), ?)`,
-        [
-          assetHistoryId,
-          AssetID,
-          id,
-          asset.CurrEmployeeID ?? null,
-          asset.CurrSectionID ?? null,
-          EmployeeReceiveID,
-          SectionReceiveID ?? null,
-          Quantity ?? 1,
-          note,
-        ]
-      );
+      // 🔁 Xử lý từng tài sản trong phiếu
+      for (const row of rows) {
+        const AssetID = row.AssetID;
+        const qty = Number(row.Quantity ?? 1);
+        const IssueDescription = row.IssueDescription || "";
 
-      // ⚙️ Giảm RemainQuantity & set Status
-      const remain = Number(asset.RemainQuantity ?? 0) - Number(Quantity ?? 1);
-      const newStatus = determineAssetStatus(
-        Number(asset.Quantity ?? 1),
-        remain,
-        ASSET_STATUS
-      );
+        if (!AssetID) throw new AppError("ASSET_ID_REQUIRED", 400);
+        if (!Number.isFinite(qty) || qty <= 0) {
+          throw new AppError("INVALID_QUANTITY", 400);
+        }
 
-      await conn.execute(
-        `UPDATE asset
-           SET RemainQuantity = ?,
-               Status = ?,
-               EmployeeID = NULL,
-               SectionID = ?
-         WHERE ID = ?`,
-        [remain, newStatus, SectionReceiveID ?? null, AssetID]
-      );
+        // Lock asset
+        const [[asset]] = await conn.execute(
+          `SELECT Quantity, RemainQuantity,
+                  EmployeeID AS CurrEmployeeID,
+                  SectionID  AS CurrSectionID,
+                  Status
+           FROM asset
+           WHERE ID = ?
+           FOR UPDATE`,
+          [AssetID]
+        );
+        if (!asset) throw new AppError("ASSET_NOT_FOUND", 404);
+
+        // Ngăn bảo trì khi đã disposed / đang bảo trì / đang bảo hành
+        if (
+          [
+            ASSET_STATUS.DISPOSED,
+            ASSET_STATUS.MAINTENANCE_OUT,
+            ASSET_STATUS.WARRANTY_OUT,
+          ].includes(Number(asset.Status))
+        ) {
+          throw new AppError("ASSET_NOT_ALLOWED_FOR_MAINTENANCE", 409);
+        }
+
+        const originalQty = Number(asset.Quantity ?? 1);
+        const currentRemain = Number(
+          asset.RemainQuantity != null ? asset.RemainQuantity : originalQty
+        );
+
+        // Không được xuất nhiều hơn số còn trong kho
+        if (qty > currentRemain) {
+          throw new AppError(
+            `MAINT_QTY_EXCEED_STOCK_FOR_ASSET_${AssetID}`,
+            400
+          );
+        }
+
+        const remain = currentRemain - qty;
+
+        const newStatus = determineStatusAfterMaintenanceOut(
+          originalQty,
+          remain,
+          ASSET_STATUS
+        );
+
+        // Lịch sử: 1 asset -> 1 dòng history
+        const assetHistoryId = uuidv4();
+        const note = `Xuất bảo trì ${qty} thiết bị${
+          IssueDescription ? ` - ${IssueDescription}` : ""
+        }`;
+
+        await conn.execute(
+          `INSERT INTO assethistory
+            (ID, AssetID, RequestID, EmployeeID, SectionID,
+             EmployeeReceiveID, SectionReceiveID, Quantity, Type, ActionAt, Note)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'MAINTENANCE_OUT', NOW(), ?)`,
+          [
+            assetHistoryId,
+            AssetID,
+            id,
+            asset.CurrEmployeeID ?? null,   // từ ai / bộ phận nào
+            asset.CurrSectionID ?? null,
+            EmployeeReceiveID,              // nơi nhận bảo trì
+            SectionReceiveID ?? null,
+            qty,
+            note,
+          ]
+        );
+
+        // ⚙️ Cập nhật asset:
+        // - Nếu vẫn còn hàng trong kho → giữ nguyên Employee/Section cũ
+        // - Nếu đã hết hàng → gán sang bên nhận bảo trì
+        if (remain > 0) {
+          await conn.execute(
+            `UPDATE asset
+               SET RemainQuantity = ?,
+                   Status = ?
+             WHERE ID = ?`,
+            [remain, newStatus, AssetID]
+          );
+        } else {
+          await conn.execute(
+            `UPDATE asset
+               SET RemainQuantity = ?,
+                   Status = ?,
+                   EmployeeID = ?,
+                   SectionID = ?
+             WHERE ID = ?`,
+            [
+              remain,
+              newStatus,
+              EmployeeReceiveID,
+              SectionReceiveID ?? null,
+              AssetID,
+            ]
+          );
+        }
+      }
 
       // Update Request
       await conn.execute(
-        `UPDATE request SET CurrentState='APPROVED', UpdatedAt=NOW() WHERE RequestID=?`,
+        `UPDATE request 
+         SET CurrentState='APPROVED', UpdatedAt=NOW() 
+         WHERE RequestID=?`,
         [id]
       );
 
-      // Log CONFIRMED
+      // Log CONFIRMED (sau khi xử lý xong tất cả asset)
       await conn.execute(
         `INSERT INTO approvalhistory
           (RequestID, ApproverUserID, DepartmentID, Action, ActionAt, Comment)
-         VALUES (?, ?, ?, 'CONFIRMED', NOW(), 'Đã xuất bảo trì và cập nhật tồn kho/trạng thái')`,
+         VALUES (?, ?, ?, 'CONFIRMED', NOW(), 'Đã xuất bảo trì và cập nhật tồn kho/trạng thái cho tất cả tài sản')`,
         [id, ApproverUserID, DepartmentID]
       );
     }
@@ -195,6 +258,7 @@ const getRequestMaintenanceDetail = async (id) => {
     `SELECT * FROM request WHERE RequestID=?`,
     [id]
   );
+  // maintenance là MẢNG các asset giống allocation
   const [maint] = await db.execute(
     `SELECT * FROM request_maintenance WHERE RequestID=?`,
     [id]
@@ -219,8 +283,11 @@ const getAllRequestMaintenanceDetail = async () => {
       r.Note,
       COALESCE(SUM(rm.Quantity), 0) AS TotalQuantity
      FROM request r
-     JOIN requesttype rt ON rt.RequestTypeID = r.RequestTypeID AND UPPER(rt.Code)='MAINTENANCE'
-     LEFT JOIN request_maintenance rm ON rm.RequestID = r.RequestID
+     JOIN requesttype rt 
+       ON rt.RequestTypeID = r.RequestTypeID 
+      AND UPPER(rt.Code)='MAINTENANCE'
+     LEFT JOIN request_maintenance rm 
+       ON rm.RequestID = r.RequestID
      GROUP BY 
        r.RequestID, r.RequesterUserID, r.TargetUserID, r.TargetDepartmentID,
        r.CurrentState, r.CreatedAt, r.UpdatedAt, r.Note

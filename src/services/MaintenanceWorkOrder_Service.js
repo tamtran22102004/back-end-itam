@@ -1,81 +1,16 @@
 const db = require("../config/database");
 const AppError = require("../utils/AppError");
 
-const getWorkOrders = async (query = {}) => {
-  const { status, asset, from, to, assignee } = query;
-  const where = [];
-  const params = [];
-  if (status) {
-    where.push("Status=?");
-    params.push(status);
-  }
-  if (asset) {
-    where.push("AssetID=?");
-    params.push(asset);
-  }
-  if (assignee) {
-    where.push("AssignedToUserID=?");
-    params.push(Number(assignee));
-  }
-  if (from) {
-    where.push("DueDate>=?");
-    params.push(from);
-  }
-  if (to) {
-    where.push("DueDate<=?");
-    params.push(to);
-  }
-
-  const sql = `
-    SELECT * FROM maintenanceworkorder
-    ${where.length ? "WHERE " + where.join(" AND ") : ""}
-    ORDER BY DueDate ASC, WorkOrderID DESC
-    LIMIT 500
-  `;
-  const [rows] = await db.execute(sql, params);
-  return rows;
-};
-
-const createWorkOrder = async (payload) => {
-  const {
-    ScheduleID = null,
-    AssetID,
-    DueDate,
-    PlannedStart = null,
-    PlannedEnd = null,
-    AssignedToUserID = null,
-    Notes = null,
-    CreatedByUserID = null,
-  } = payload;
-
-  await db.execute(
-    `INSERT INTO maintenanceworkorder
-      (ScheduleID, AssetID, DueDate, PlannedStart, PlannedEnd, AssignedToUserID, CreatedByUserID, Status, ResultNotes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)`,
-    [
-      ScheduleID,
-      AssetID,
-      DueDate,
-      PlannedStart,
-      PlannedEnd,
-      AssignedToUserID,
-      CreatedByUserID,
-      Notes,
-    ]
-  );
-  return { AssetID, DueDate, ScheduleID, AssignedToUserID };
-};
-// ===== Status map =====
+// ===== Asset status map (giữ nguyên như cũ) =====
 const ASSET_STATUS = {
   AVAILABLE: 1,
   ALLOCATED: 2,
-  MAINTENANCE_OUT: 3, // dùng trong assethistory.Type
+  MAINTENANCE_OUT: 3,
   WARRANTY_OUT: 4,
   DISPOSED: 5,
   IN_USE: 6,
 };
 
-// ===== Helper: quyết định trạng thái sau khi thay đổi tồn kho =====
 function determineAssetStatus(originalQty, remainQty) {
   const o = Number(originalQty ?? 1);
   const r = Number(remainQty ?? 0);
@@ -84,7 +19,6 @@ function determineAssetStatus(originalQty, remainQty) {
   return ASSET_STATUS.IN_USE;
 }
 
-// ===== Helper: chuẩn hóa (UserID, DepartmentID) nhận tài sản =====
 async function normalizeReceiver(conn, userId, departmentId) {
   if (!userId) throw new AppError("RECEIVER_USER_REQUIRED", 400);
   let deptId = departmentId ?? null;
@@ -98,13 +32,116 @@ async function normalizeReceiver(conn, userId, departmentId) {
   return { userId, deptId };
 }
 
-/**
- * BẮT ĐẦU WORK ORDER (OUT):
- * - Bắt buộc truyền receiver: { ReceiverUserID, ReceiverDepartmentID? }
- * - Giảm RemainQuantity theo wo.Quantity (mặc định 1)
- * - Gán asset.EmployeeID/SectionID = receiver
- * - Log assethistory: MAINTENANCE_OUT (Quantity = wo.Quantity)
- */
+/* ============================================================
+   GET WORK ORDERS
+   GET /api/maintenance/workorders?status=&asset=&assignee=&scheduleAssetId=&from=&to=
+============================================================ */
+const getWorkOrders = async (query = {}) => {
+  const { status, asset, assignee, scheduleAssetId, from, to } = query;
+
+  const where = [];
+  const params = [];
+
+  if (status) {
+    where.push("w.Status = ?");
+    params.push(status);
+  }
+  if (asset) {
+    where.push("w.AssetID = ?");
+    params.push(asset);
+  }
+  if (assignee) {
+    where.push("w.AssignedToUserID = ?");
+    params.push(Number(assignee));
+  }
+  if (scheduleAssetId) {
+    where.push("w.ScheduleAssetID = ?");
+    params.push(Number(scheduleAssetId));
+  }
+  if (from) {
+    where.push("w.DueDate >= ?");
+    params.push(from);
+  }
+  if (to) {
+    where.push("w.DueDate <= ?");
+    params.push(to);
+  }
+
+  const sql = `
+    SELECT
+      w.*,
+      sa.ScheduleID
+    FROM maintenanceworkorder w
+    LEFT JOIN maintenancescheduleasset sa
+      ON sa.ID = w.ScheduleAssetID
+    ${where.length ? "WHERE " + where.join(" AND ") : ""}
+    ORDER BY w.DueDate ASC, w.WorkOrderID DESC
+    LIMIT 500
+  `;
+
+  const [rows] = await db.execute(sql, params);
+  return rows;
+};
+
+/* ============================================================
+   CREATE WORK ORDER – dùng ScheduleAssetID (KHÔNG còn ScheduleID)
+============================================================ */
+const createWorkOrder = async (payload) => {
+  const {
+    ScheduleAssetID,
+    AssetID,
+    DueDate,
+    PlannedStart = null,
+    PlannedEnd = null,
+    AssignedToUserID = null,
+    CreatedByUserID = null,
+    Notes = null, // map vào ResultNotes ban đầu (nội dung yêu cầu)
+  } = payload;
+
+  if (!ScheduleAssetID) throw new AppError("ScheduleAssetID_REQUIRED", 400);
+  if (!AssetID) throw new AppError("AssetID_REQUIRED", 400);
+  if (!DueDate) throw new AppError("DueDate_REQUIRED", 400);
+
+  const [rs] = await db.execute(
+    `
+      INSERT INTO maintenanceworkorder
+      (
+        ScheduleAssetID,
+        AssetID,
+        DueDate,
+        PlannedStart,
+        PlannedEnd,
+        AssignedToUserID,
+        CreatedByUserID,
+        Status,
+        ResultNotes
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)
+    `,
+    [
+      ScheduleAssetID,
+      AssetID,
+      DueDate,
+      PlannedStart,
+      PlannedEnd,
+      AssignedToUserID,
+      CreatedByUserID,
+      Notes,
+    ]
+  );
+
+  return {
+    WorkOrderID: rs.insertId,
+    ScheduleAssetID,
+    AssetID,
+    DueDate,
+  };
+};
+
+/* ============================================================
+   START WORK ORDER (MAINTENANCE_OUT)
+   PATCH /api/maintenance/workorders/:id/start
+============================================================ */
 const startWorkOrder = async (
   workOrderId,
   { PlannedStart = null, ReceiverUserID, ReceiverDepartmentID = null } = {}
@@ -113,60 +150,78 @@ const startWorkOrder = async (
   try {
     await conn.beginTransaction();
 
-    // Lock WO
     const [[wo]] = await conn.execute(
       "SELECT * FROM maintenanceworkorder WHERE WorkOrderID=? FOR UPDATE",
       [workOrderId]
     );
     if (!wo) throw new AppError("WORK_ORDER_NOT_FOUND", 404);
-    if (wo.Status !== "OPEN") throw new AppError("WORK_ORDER_NOT_OPEN", 409);
+    if (wo.Status !== "OPEN")
+      throw new AppError("WORK_ORDER_NOT_OPEN", 409);
 
     const qty = Number(wo.Quantity ?? 1);
 
-    // Lock asset
     const [[asset]] = await conn.execute(
-      `SELECT Quantity, RemainQuantity,
-              EmployeeID AS CurrEmployeeID,
-              SectionID  AS CurrSectionID
-       FROM asset WHERE ID=? FOR UPDATE`,
+      `
+        SELECT Quantity, RemainQuantity,
+               EmployeeID AS CurrEmployeeID,
+               SectionID  AS CurrSectionID
+        FROM asset
+        WHERE ID=? FOR UPDATE
+      `,
       [wo.AssetID]
     );
     if (!asset) throw new AppError("ASSET_NOT_FOUND", 404);
 
-    // Chuẩn hóa người nhận OUT
     const { userId: recvUID, deptId: recvDID } = await normalizeReceiver(
       conn,
       ReceiverUserID,
       ReceiverDepartmentID
     );
 
-    // Giảm tồn kho (không cho âm)
     const remain = Math.max(0, Number(asset.RemainQuantity ?? 0) - qty);
-    const newStatus = determineAssetStatus(Number(asset.Quantity ?? 1), remain);
+    const newStatus = determineAssetStatus(
+      Number(asset.Quantity ?? 1),
+      remain
+    );
 
-    // Cập nhật WO
     await conn.execute(
-      `UPDATE maintenanceworkorder
-       SET Status='IN_PROGRESS', PlannedStart=COALESCE(?, NOW())
-       WHERE WorkOrderID=?`,
+      `
+        UPDATE maintenanceworkorder
+        SET Status='IN_PROGRESS',
+            PlannedStart=COALESCE(?, NOW())
+        WHERE WorkOrderID=?
+      `,
       [PlannedStart, workOrderId]
     );
 
-    // Cập nhật Asset: gán người/đơn vị nhận bảo trì
     await conn.execute(
-      `UPDATE asset
-         SET RemainQuantity=?, Status=?, EmployeeID=?, SectionID=?
-       WHERE ID=?`,
+      `
+        UPDATE asset
+        SET RemainQuantity=?,
+            Status=?,
+            EmployeeID=?,
+            SectionID=?
+        WHERE ID=?
+      `,
       [remain, newStatus, recvUID, recvDID, wo.AssetID]
     );
 
-    // Ghi lịch sử: MAINTENANCE_OUT (from = Curr*, to = receiver)
     await conn.execute(
-      `INSERT INTO assethistory
-         (ID, AssetID, RequestID, EmployeeID, SectionID,
-          EmployeeReceiveID, SectionReceiveID, Quantity, Type, ActionAt, Note)
-       VALUES (UUID(), ?, NULL, ?, ?, ?, ?, ?, 'MAINTENANCE_OUT', NOW(),
-               CONCAT('WO#', ?, ' start'))`,
+      `
+        INSERT INTO assethistory
+        (
+          ID, AssetID, RequestID,
+          EmployeeID, SectionID,
+          EmployeeReceiveID, SectionReceiveID,
+          Quantity, Type, ActionAt, Note
+        )
+        VALUES
+        (
+          UUID(), ?, NULL,
+          ?, ?, ?, ?, ?, 'MAINTENANCE_OUT',
+          NOW(), CONCAT('WO#', ?, ' start')
+        )
+      `,
       [
         wo.AssetID,
         asset.CurrEmployeeID ?? null,
@@ -195,14 +250,10 @@ const startWorkOrder = async (
   }
 };
 
-/**
- * HOÀN THÀNH WORK ORDER (IN):
- * - Bắt buộc truyền nơi nhận về: { ReturnUserID, ReturnDepartmentID? }
- * - Cộng RemainQuantity theo wo.Quantity (mặc định 1)
- * - Gán asset.EmployeeID/SectionID = nơi nhận về
- * - Log assethistory: MAINTENANCE_IN (Quantity = wo.Quantity, ActionAt = CompletedAt/NOW)
- * - Cập nhật schedule nếu có
- */
+/* ============================================================
+   COMPLETE WORK ORDER (MAINTENANCE_IN + cập nhật lịch tài sản)
+   PATCH /api/maintenance/workorders/:id/complete
+============================================================ */
 const completeWorkOrder = async (
   workOrderId,
   {
@@ -218,7 +269,6 @@ const completeWorkOrder = async (
   try {
     await conn.beginTransaction();
 
-    // Lock WO
     const [[wo]] = await conn.execute(
       "SELECT * FROM maintenanceworkorder WHERE WorkOrderID=? FOR UPDATE",
       [workOrderId]
@@ -229,74 +279,127 @@ const completeWorkOrder = async (
 
     const qty = Number(wo.Quantity ?? 1);
 
-    // Lock asset
     const [[asset]] = await conn.execute(
-      `SELECT Quantity, RemainQuantity
-       FROM asset WHERE ID=? FOR UPDATE`,
+      `
+        SELECT Quantity, RemainQuantity
+        FROM asset
+        WHERE ID=? FOR UPDATE
+      `,
       [wo.AssetID]
     );
     if (!asset) throw new AppError("ASSET_NOT_FOUND", 404);
 
-    // Chuẩn hóa nơi nhận về
     const { userId: retUID, deptId: retDID } = await normalizeReceiver(
       conn,
       ReturnUserID,
       ReturnDepartmentID
     );
 
-    // Cộng tồn kho
     const remain = Number(asset.RemainQuantity ?? 0) + qty;
-    const newStatus = determineAssetStatus(Number(asset.Quantity ?? 1), remain);
+    const newStatus = determineAssetStatus(
+      Number(asset.Quantity ?? 1),
+      remain
+    );
 
-    // 1) Đánh dấu DONE
     await conn.execute(
-      `UPDATE maintenanceworkorder
-         SET Status='DONE',
-             CompletedAt=COALESCE(?, NOW()),
-             ResultNotes=?,
-             Cost=?
-       WHERE WorkOrderID=?`,
+      `
+        UPDATE maintenanceworkorder
+        SET Status='DONE',
+            CompletedAt = COALESCE(?, NOW()),
+            ResultNotes = ?,
+            Cost = ?
+        WHERE WorkOrderID=?
+      `,
       [CompletedAt, ResultNotes, Cost, workOrderId]
     );
 
-    // 2) Ghi lịch sử: MAINTENANCE_IN (to = nơi nhận về)
     await conn.execute(
-      `INSERT INTO assethistory
-         (ID, AssetID, RequestID, EmployeeID, SectionID,
-          EmployeeReceiveID, SectionReceiveID, Quantity, Type, ActionAt, Note)
-       VALUES (UUID(), ?, NULL, NULL, NULL, ?, ?, ?, 'MAINTENANCE_IN', COALESCE(?, NOW()),
-               CONCAT('WO#', ?, ' done'))`,
+      `
+        INSERT INTO assethistory
+        (
+          ID, AssetID, RequestID,
+          EmployeeID, SectionID,
+          EmployeeReceiveID, SectionReceiveID,
+          Quantity, Type, ActionAt, Note
+        )
+        VALUES
+        (
+          UUID(), ?, NULL,
+          NULL, NULL,
+          ?, ?, ?, 'MAINTENANCE_IN',
+          COALESCE(?, NOW()),
+          CONCAT('WO#', ?, ' done')
+        )
+      `,
       [wo.AssetID, retUID, retDID, qty, CompletedAt, workOrderId]
     );
 
-    // 3) Cập nhật Asset: trả về & gán người/đơn vị nhận về
     await conn.execute(
-      `UPDATE asset
-         SET RemainQuantity=?, Status=?, EmployeeID=?, SectionID=?
-       WHERE ID=?`,
+      `
+        UPDATE asset
+        SET RemainQuantity=?,
+            Status=?,
+            EmployeeID=?,
+            SectionID=?
+        WHERE ID=?
+      `,
       [remain, newStatus, retUID, retDID, wo.AssetID]
     );
 
-    // 4) Cập nhật lịch bảo trì (nếu có)
-    if (wo.ScheduleID && UpdateScheduleNext) {
-      const [[ms]] = await conn.execute(
-        "SELECT * FROM maintenanceschedule WHERE ScheduleID=? FOR UPDATE",
-        [wo.ScheduleID]
+    // === Cập nhật lịch bảo trì cho asset nếu có ScheduleAssetID ===
+    if (wo.ScheduleAssetID && UpdateScheduleNext) {
+      const [[sa]] = await conn.execute(
+        `
+          SELECT sa.ID, sa.ScheduleID, s.IntervalMonths
+          FROM maintenancescheduleasset sa
+          JOIN maintenanceschedule s
+            ON s.ScheduleID = sa.ScheduleID
+          WHERE sa.ID = ?
+          FOR UPDATE
+        `,
+        [wo.ScheduleAssetID]
       );
-      if (ms) {
+
+      if (sa) {
+        const completedDateExpr = "DATE(COALESCE(?, NOW()))";
+        const interval = Number(sa.IntervalMonths ?? 0);
+
         await conn.execute(
-          `UPDATE maintenanceschedule
-             SET LastMaintenanceDate = DATE(COALESCE(?, NOW())),
-                 NextMaintenanceDate = CASE
-                   WHEN COALESCE(IntervalMonths,0) <= 0 THEN NULL
-                   ELSE DATE_ADD(DATE(COALESCE(?, NOW())), INTERVAL IntervalMonths MONTH)
-                 END,
-                 Status = CASE
-                   WHEN COALESCE(IntervalMonths,0) <= 0 THEN 'COMPLETED'
-                   ELSE 'ACTIVE'
-                 END
-           WHERE ScheduleID=?`,
-          [CompletedAt, CompletedAt, wo.ScheduleID]
+          `
+            UPDATE maintenancescheduleasset
+            SET LastMaintenanceDate = ${completedDateExpr},
+                NextMaintenanceDate = CASE
+                  WHEN ? <= 0 THEN NULL
+                  ELSE DATE_ADD(${completedDateExpr}, INTERVAL ? MONTH)
+                END,
+                Status = CASE
+                  WHEN ? <= 0 THEN 'COMPLETED'
+                  ELSE 'ACTIVE'
+                END
+            WHERE ID = ?
+          `,
+          [
+            CompletedAt,
+            interval,
+            CompletedAt,
+            interval,
+            interval,
+            sa.ID,
+          ]
+        );
+
+        // Optional: cập nhật NextMaintenanceDate của header = min(NextMaintenanceDate) của các asset cùng Schedule
+        await conn.execute(
+          `
+            UPDATE maintenanceschedule
+            SET NextMaintenanceDate = (
+              SELECT MIN(NextMaintenanceDate)
+              FROM maintenancescheduleasset
+              WHERE ScheduleID = ?
+            )
+            WHERE ScheduleID = ?
+          `,
+          [sa.ScheduleID, sa.ScheduleID]
         );
       }
     }
@@ -318,15 +421,21 @@ const completeWorkOrder = async (
   }
 };
 
+/* ============================================================
+   CANCEL WORK ORDER
+============================================================ */
 const cancelWorkOrder = async (workOrderId, Reason = null) => {
   const [ret] = await db.execute(
-    `UPDATE maintenanceworkorder
-     SET Status='CANCELLED',
-         ResultNotes=CONCAT(COALESCE(ResultNotes,''), ' | Cancel: ', ?)
-     WHERE WorkOrderID=? AND Status IN ('OPEN','IN_PROGRESS')`,
+    `
+      UPDATE maintenanceworkorder
+      SET Status='CANCELLED',
+          ResultNotes = CONCAT(COALESCE(ResultNotes, ''), ' | Cancel: ', ?)
+      WHERE WorkOrderID=? AND Status IN ('OPEN','IN_PROGRESS')
+    `,
     [Reason, workOrderId]
   );
-  if (ret.affectedRows === 0) throw new AppError("CANNOT_CANCEL_WO", 409);
+  if (ret.affectedRows === 0)
+    throw new AppError("CANNOT_CANCEL_WO", 409);
   return { WorkOrderID: workOrderId, Status: "CANCELLED" };
 };
 

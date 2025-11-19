@@ -1,125 +1,83 @@
 const db = require("../config/database");
 const AppError = require("../utils/AppError");
-const { v4: uuidv4 } = require("uuid");
 
-const getSchedules = async (query = {}) => {
-  const { status, assignee, from, to, asset } = query;
-  const where = [];
-  const params = [];
-  if (status) { where.push("Status = ?"); params.push(status); }
-  if (assignee) { where.push("AssignedToUserID = ?"); params.push(Number(assignee)); }
-  if (asset) { where.push("AssetID = ?"); params.push(asset); }
-  if (from) { where.push("NextMaintenanceDate >= ?"); params.push(from); }
-  if (to) { where.push("NextMaintenanceDate <= ?"); params.push(to); }
+// ==============================
+// GET LIST
+// ==============================
+const getSchedules = async () => {
+  const [rows] = await db.execute(`
+    SELECT s.*, 
+      COUNT(sa.ID) AS AssetCount,
+      SUM(sa.Status='ACTIVE') AS ActiveAssets
+    FROM maintenanceschedule s
+    LEFT JOIN maintenancescheduleasset sa ON sa.ScheduleID = s.ScheduleID
+    GROUP BY s.ScheduleID
+    ORDER BY s.CreatedAt DESC
+    LIMIT 300
+  `);
 
-  const sql = `
-    SELECT * FROM maintenanceschedule
-    ${where.length ? "WHERE " + where.join(" AND ") : ""}
-    ORDER BY NextMaintenanceDate ASC, Priority DESC
-    LIMIT 500
-  `;
-  const [rows] = await db.execute(sql, params);
   return rows;
 };
 
+// ==============================
+// CREATE SCHEDULE (multi-assets)
+// ==============================
 const createSchedule = async (payload) => {
-  const {
-    AssetID,
-    IntervalMonths = null,
-    NextMaintenanceDate,
-    AssignedToUserID = null,
-    ReminderDaysBefore = 7,
-    WindowStart = null,
-    WindowEnd = null,
-    EstimatedHours = null,
-    Priority = "MEDIUM",
-    Notes = null,
-    AutoCreateWorkOrder = true,
-    CreatedByUserID = null,
-  } = payload;
-
-  await db.execute(
-    `INSERT INTO maintenanceschedule
-      (AssetID, IntervalMonths, NextMaintenanceDate, LastMaintenanceDate, Status,
-       CreatedByUserID, AssignedToUserID, ReminderDaysBefore, WindowStart, WindowEnd,
-       EstimatedHours, Priority, Notes, AutoCreateWorkOrder)
-     VALUES (?, ?, ?, NULL, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      AssetID,
-      IntervalMonths,
-      NextMaintenanceDate,
-      CreatedByUserID,
-      AssignedToUserID,
-      ReminderDaysBefore,
-      WindowStart,
-      WindowEnd,
-      EstimatedHours,
-      Priority,
-      Notes,
-      !!AutoCreateWorkOrder,
-    ]
-  );
-  return { AssetID, NextMaintenanceDate, IntervalMonths, AssignedToUserID, AutoCreateWorkOrder };
-};
-
-const updateSchedule = async (id, updates = {}) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
 
-    const [[ms]] = await conn.execute(
-      "SELECT * FROM maintenanceschedule WHERE ScheduleID=? FOR UPDATE",
-      [id]
-    );
-    if (!ms) throw new AppError("SCHEDULE_NOT_FOUND", 404);
-
-    if (updates.Cancel === true) {
-      if (ms.Status !== "CANCELLED") {
-        await conn.execute("UPDATE maintenanceschedule SET Status='CANCELLED' WHERE ScheduleID=?", [id]);
-      }
-      await conn.commit();
-      return { ScheduleID: id, Status: "CANCELLED" };
-    }
-
-    const sets = [];
-    const params = [];
-    const add = (f, v) => { sets.push(`${f}=?`); params.push(v); };
-
     const {
+      Title,
       IntervalMonths,
       NextMaintenanceDate,
-      AssignedToUserID,
-      ReminderDaysBefore,
-      WindowStart,
-      WindowEnd,
-      EstimatedHours,
-      Priority,
-      Notes,
-      AutoCreateWorkOrder,
-      Status, // (optional) allow manual status change (except to CANCELLED use Cancel flag)
-    } = updates;
+      Priority = "MEDIUM",
+      Notes = null,
+      AutoCreateWorkOrder = true,
+      CreatedByUserID,
+      Assets = [] // list asset configs
+    } = payload;
 
-    if (IntervalMonths !== undefined) add("IntervalMonths", IntervalMonths ?? null);
-    if (NextMaintenanceDate !== undefined) add("NextMaintenanceDate", NextMaintenanceDate);
-    if (AssignedToUserID !== undefined) add("AssignedToUserID", AssignedToUserID ?? null);
-    if (ReminderDaysBefore !== undefined) add("ReminderDaysBefore", ReminderDaysBefore);
-    if (WindowStart !== undefined) add("WindowStart", WindowStart ?? null);
-    if (WindowEnd !== undefined) add("WindowEnd", WindowEnd ?? null);
-    if (EstimatedHours !== undefined) add("EstimatedHours", EstimatedHours ?? null);
-    if (Priority !== undefined) add("Priority", Priority);
-    if (Notes !== undefined) add("Notes", Notes ?? null);
-    if (AutoCreateWorkOrder !== undefined) add("AutoCreateWorkOrder", !!AutoCreateWorkOrder);
-    if (Status !== undefined && Status !== "CANCELLED") add("Status", Status);
+    // 1. Insert header
+    const [r1] = await conn.execute(
+      `INSERT INTO maintenanceschedule
+        (Title, IntervalMonths, NextMaintenanceDate, Priority, Notes, AutoCreateWorkOrder, CreatedByUserID)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        Title,
+        IntervalMonths,
+        NextMaintenanceDate,
+        Priority,
+        Notes,
+        !!AutoCreateWorkOrder,
+        CreatedByUserID
+      ]
+    );
 
-    if (!sets.length) {
-      await conn.rollback();
-      return { ScheduleID: id, message: "No change" };
+    const scheduleId = r1.insertId;
+
+    // 2. Insert asset rows
+    for (const item of Assets) {
+      await conn.execute(
+        `INSERT INTO maintenancescheduleasset
+          (ScheduleID, AssetID, AssignedToUserID, NextMaintenanceDate,
+           ReminderDaysBefore, WindowStart, WindowEnd, EstimatedHours)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          scheduleId,
+          item.AssetID,
+          item.AssignedToUserID ?? null,
+          NextMaintenanceDate,
+          item.ReminderDaysBefore ?? 7,
+          item.WindowStart ?? null,
+          item.WindowEnd ?? null,
+          item.EstimatedHours ?? null
+        ]
+      );
     }
-    params.push(id);
 
-    await conn.execute(`UPDATE maintenanceschedule SET ${sets.join(", ")} WHERE ScheduleID=?`, params);
     await conn.commit();
-    return { ScheduleID: id, updated: true };
+    return { ScheduleID: scheduleId };
   } catch (e) {
     await conn.rollback();
     throw e;
@@ -128,30 +86,60 @@ const updateSchedule = async (id, updates = {}) => {
   }
 };
 
-const generateWOForCurrentCycle = async (scheduleId, userId = null) => {
+// ==============================
+// UPDATE SCHEDULE HEADER
+// ==============================
+const updateSchedule = async (scheduleId, updates = {}) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
 
-    const [[ms]] = await conn.execute(
+    const [[sched]] = await conn.execute(
       "SELECT * FROM maintenanceschedule WHERE ScheduleID=? FOR UPDATE",
       [scheduleId]
     );
-    if (!ms) throw new AppError("SCHEDULE_NOT_FOUND", 404);
-    if (ms.Status === "CANCELLED") throw new AppError("SCHEDULE_CANCELLED", 409);
-    if (!ms.NextMaintenanceDate) throw new AppError("SCHEDULE_HAS_NO_NEXT_DATE", 409);
+    if (!sched) throw new AppError("SCHEDULE_NOT_FOUND", 404);
 
-    // Yêu cầu: tạo UNIQUE KEY uq_mwo_sched_due (ScheduleID, DueDate) cho idempotent
-    await conn.execute(
-      `INSERT INTO maintenanceworkorder
-         (ScheduleID, AssetID, DueDate, AssignedToUserID, CreatedByUserID, Status)
-       VALUES (?, ?, ?, ?, ?, 'OPEN')
-       ON DUPLICATE KEY UPDATE WorkOrderID=WorkOrderID`,
-      [ms.ScheduleID, ms.AssetID, ms.NextMaintenanceDate, ms.AssignedToUserID, userId]
-    );
+    if (updates.Cancel === true) {
+      await conn.execute(
+        "UPDATE maintenanceschedule SET Status='CANCELLED' WHERE ScheduleID=?",
+        [scheduleId]
+      );
+      await conn.commit();
+      return { ScheduleID: scheduleId, Status: "CANCELLED" };
+    }
+
+    const fields = [];
+    const params = [];
+
+    const allow = [
+      "Title",
+      "IntervalMonths",
+      "NextMaintenanceDate",
+      "Priority",
+      "Notes",
+      "AutoCreateWorkOrder",
+      "Status"
+    ];
+
+    for (const key of allow) {
+      if (updates[key] !== undefined) {
+        fields.push(`${key}=?`);
+        params.push(updates[key]);
+      }
+    }
+
+    if (fields.length) {
+      params.push(scheduleId);
+      await conn.execute(
+        `UPDATE maintenanceschedule SET ${fields.join(", ")}
+         WHERE ScheduleID=?`,
+        params
+      );
+    }
 
     await conn.commit();
-    return { ScheduleID: scheduleId, DueDate: ms.NextMaintenanceDate, created: true };
+    return { ScheduleID: scheduleId, updated: true };
   } catch (e) {
     await conn.rollback();
     throw e;
@@ -159,10 +147,100 @@ const generateWOForCurrentCycle = async (scheduleId, userId = null) => {
     conn.release();
   }
 };
+
+// ==============================
+// UPDATE A SINGLE ASSET INSIDE SCHEDULE
+// ==============================
+const updateScheduleAsset = async (id, updates = {}) => {
+  const fields = [];
+  const params = [];
+
+  const allow = [
+    "AssignedToUserID",
+    "NextMaintenanceDate",
+    "ReminderDaysBefore",
+    "WindowStart",
+    "WindowEnd",
+    "EstimatedHours",
+    "Status"
+  ];
+
+  for (const key of allow) {
+    if (updates[key] !== undefined) {
+      fields.push(`${key}=?`);
+      params.push(updates[key]);
+    }
+  }
+
+  params.push(id);
+
+  await db.execute(
+    `UPDATE maintenancescheduleasset SET ${fields.join(", ")} WHERE ID=?`,
+    params
+  );
+
+  return { ID: id, updated: true };
+};
+
+// ==============================
+// GENERATE WORK ORDERS FOR ALL ASSETS IN A SCHEDULE
+// ==============================
+const generateWOForSchedule = async (scheduleId, createdByUserId) => {
+  const conn = await db.getConnection();
+
+  try {
+    await conn.beginTransaction();
+
+    // Lấy danh sách asset thuộc ScheduleID
+    const [assets] = await conn.execute(
+      "SELECT * FROM maintenancescheduleasset WHERE ScheduleID=? AND Status='ACTIVE'",
+      [scheduleId]
+    );
+
+    for (const item of assets) {
+      await conn.execute(
+        `
+          INSERT INTO maintenanceworkorder
+          (
+            ScheduleAssetID,
+            AssetID,
+            DueDate,
+            AssignedToUserID,
+            CreatedByUserID,
+            Status
+          )
+          VALUES (?, ?, ?, ?, ?, 'OPEN')
+        `,
+        [
+          item.ID,                   // ScheduleAssetID
+          item.AssetID,              // AssetID
+          item.NextMaintenanceDate,  // DueDate
+          item.AssignedToUserID,     // AssignedToUserID
+          createdByUserId            // CreatedByUserID
+        ]
+      );
+    }
+
+    await conn.commit();
+
+    return {
+      ScheduleID: scheduleId,
+      WOCreated: assets.length,
+    };
+
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
+  }
+};
+
 
 module.exports = {
   getSchedules,
   createSchedule,
   updateSchedule,
-  generateWOForCurrentCycle,
+  updateScheduleAsset,
+  generateWOForSchedule,
 };
