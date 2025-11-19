@@ -6,10 +6,41 @@ const {
   buildQrPngBuffer,
   findAssetByToken,
 } = require("../services/QR_Service");
-const { buildApiBase, parseAndVerify } = require("../utils/qr"); // ⬅️ sửa lại import
+const { buildApiBase, parseAndVerify } = require("../utils/qr");
 const { successResponse } = require("../utils/formatResponse");
 
-// POST /api/qr/:id/mint-qr
+// 🔁 POST /api/qr/:id/remint  → tạo token mới & PNG mới
+const reMintQr = async (req, res, next) => {
+  try {
+    const assetId = String(req.params.id);
+
+    // ép tạo QR mới bằng force = true
+    const newToken = await ensureAssetQr(assetId, { force: true });
+
+    const apiBase = buildApiBase(req);
+    const qrUrl = `${apiBase}/api/qr/${encodeURIComponent(newToken)}`;
+
+    const buf = await buildQrPngBuffer(qrUrl, { width: 480, margin: 1 });
+
+    return successResponse(
+      res,
+      200,
+      {
+        assetId,
+        token: newToken,
+        qrUrl,
+        pngBase64: `data:image/png;base64,${buf.toString("base64")}`,
+      },
+      "Re-mint QR successfully"
+    );
+  } catch (err) {
+    return next(
+      err instanceof AppError ? err : new AppError("QR_REMINT_FAILED", 500)
+    );
+  }
+};
+
+// POST /api/qr/:id/mint-qr  → nếu chưa có thì sinh, nếu có mà force=1 thì sinh lại
 const mintQr = async (req, res, next) => {
   try {
     const assetId = String(req.params.id);
@@ -22,6 +53,7 @@ const mintQr = async (req, res, next) => {
     const qrUrl = `${apiBase}/api/qr/${encodeURIComponent(token)}`;
 
     const buf = await buildQrPngBuffer(qrUrl, { width: 480, margin: 1 });
+
     const data = {
       assetId,
       token,
@@ -36,7 +68,7 @@ const mintQr = async (req, res, next) => {
   }
 };
 
-// GET /api/qr/:id/qr.png   ⬅️ trả binary PNG
+// GET /api/qr/:id/qr.png   ⬅️ trả binary PNG theo assetId
 const qrPngByAssetId = async (req, res, next) => {
   try {
     const assetId = String(req.params.id);
@@ -48,16 +80,17 @@ const qrPngByAssetId = async (req, res, next) => {
     const buf = await buildQrPngBuffer(qrUrl, { width: 720, margin: 1 });
 
     res.setHeader("Content-Type", "image/png");
-    // res.setHeader("Cache-Control", "public, max-age=300, immutable");
     return res.send(buf);
   } catch (err) {
     return next(
-      err instanceof AppError ? err : new AppError("QR_PNG_GENERATION_FAILED", 500)
+      err instanceof AppError
+        ? err
+        : new AppError("QR_PNG_GENERATION_FAILED", 500)
     );
   }
 };
 
-// GET /api/qr/:token
+// GET /api/qr/:token  → scan QR → redirect FE /#/assetdetail/:id
 const resolveToken = async (req, res, next) => {
   try {
     const token = String(req.params.token || "");
@@ -70,18 +103,31 @@ const resolveToken = async (req, res, next) => {
     }
 
     const FE = config.app.PUBLIC_WEB_ORIGIN || "http://localhost:5173";
-    const redirectUrl = `${FE}/#/assetdetail/${encodeURIComponent(parsed.assetId)}`;
+    const redirectUrl = `${FE}/#/assetdetail/${encodeURIComponent(
+      parsed.assetId
+    )}`;
 
     if (String(req.query.json || "") === "1") {
-      const data = { success: true, assetId: parsed.assetId, redirect: redirectUrl };
+      const data = {
+        success: true,
+        assetId: parsed.assetId,
+        redirect: redirectUrl,
+      };
       return successResponse(res, 200, data, "QR Token resolved successfully");
     }
     return res.redirect(302, redirectUrl);
   } catch (err) {
     return next(
-      err instanceof AppError ? err : new AppError("QR_PROCESSING_FAILED", 500)
+      err instanceof AppError
+        ? err
+        : new AppError("QR_PROCESSING_FAILED", 500)
     );
   }
 };
 
-module.exports = { mintQr, qrPngByAssetId, resolveToken };
+module.exports = {
+  mintQr,
+  qrPngByAssetId,
+  resolveToken,
+  reMintQr,
+};
